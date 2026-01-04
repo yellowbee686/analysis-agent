@@ -209,7 +209,7 @@ GEMINI_3_PRO_WEIGHT_1=1
 可用 `LOCAL_AGENT_AZURE_API_VERSION` 覆盖默认 Azure API 版本（默认 `2024-03-01-preview`）。
 
 实测：部分网关会对 `gpt-i18n.byteintl.net` / `search-va.byteintl.net` 进行 301 跳转，导致 POST 变为 GET 引发 404。
-建议在 `.env` 中直接填写最终网关域名（如 `genai-sg-og.tiktok-row.org`）以避免重定向。
+建议在 `.env` 中直接填写最终网关域名（例如你们内部最终网关）以避免重定向。
 
 ---
 
