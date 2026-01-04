@@ -1,0 +1,11 @@
+.DS_Store
+data
+.venv
+.python-version
+.streamlit
+.context
+__pycache__
+.mypy_cache
+.ruff_cache
+*.log
+.env
