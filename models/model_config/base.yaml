@@ -1,0 +1,22 @@
+model_provider: "base"
+models:
+  gemini-3-pro-preview-new:
+    endpoints:
+      - base_url_env: "GEMINI_3_PRO_BASE_URL_1"
+        api_key_env: "GEMINI_3_PRO_API_KEY_1"
+        weight_env: "GEMINI_3_PRO_WEIGHT_1"
+      - base_url_env: "GEMINI_3_PRO_BASE_URL_2"
+        api_key_env: "GEMINI_3_PRO_API_KEY_2"
+        weight_env: "GEMINI_3_PRO_WEIGHT_2"
+      - base_url_env: "GEMINI_3_PRO_BASE_URL_3"
+        api_key_env: "GEMINI_3_PRO_API_KEY_3"
+        weight_env: "GEMINI_3_PRO_WEIGHT_3"
+
+  gpt-5.2-2025-12-11:
+    endpoints:
+      - base_url_env: "GPT5_2_BASE_URL_1"
+        api_key_env: "GPT5_2_API_KEY_1"
+        weight_env: "GPT5_2_WEIGHT_1"
+      - base_url_env: "GPT5_2_BASE_URL_2"
+        api_key_env: "GPT5_2_API_KEY_2"
+        weight_env: "GPT5_2_WEIGHT_2"
