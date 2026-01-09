@@ -4,6 +4,7 @@ data
 .python-version
 .streamlit
 .context
+cache
 __pycache__
 .mypy_cache
 .ruff_cache

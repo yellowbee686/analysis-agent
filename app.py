@@ -15,22 +15,46 @@ from local_file_agent.agent import build_agent  # noqa: E402
 from local_file_agent.config import load_config  # noqa: E402
 from local_file_agent.indexer import LocalIndex  # noqa: E402
 from local_file_agent.llm import list_models  # noqa: E402
+from local_file_agent.history import (  # noqa: E402
+    append_message as append_history_message,
+    ensure_history_dir,
+    init_session,
+    list_sessions,
+    load_messages,
+    new_session_path,
+)
 from camel.agents.chat_agent import StreamingChatAgentResponse  # noqa: E402
 from local_file_agent.tools import LocalDocTools  # noqa: E402
 from camel.types import ModelPlatformType  # noqa: E402
 
 
-@st.cache_resource(show_spinner="Indexing markdown files...")
 def build_index(
-    data_dir: str, chunk_max_chars: int, snippet_chars: int
+    *,
+    data_dir: Path,
+    index_dir: Path,
+    chunk_max_chars: int,
+    snippet_chars: int,
+    force_rebuild: bool,
 ) -> LocalIndex:
-    index = LocalIndex(
-        Path(data_dir),
-        chunk_max_chars=chunk_max_chars,
-        snippet_chars=snippet_chars,
+    index_key = (
+        str(data_dir),
+        str(index_dir),
+        chunk_max_chars,
+        snippet_chars,
     )
-    index.build()
-    return index
+    cached_index = st.session_state.get("index")
+    cached_key = st.session_state.get("index_key")
+    if cached_index is None or cached_key != index_key or force_rebuild:
+        index = LocalIndex(
+            data_dir,
+            chunk_max_chars=chunk_max_chars,
+            snippet_chars=snippet_chars,
+            index_dir=index_dir,
+        )
+        index.build(force_rebuild=force_rebuild)
+        st.session_state["index"] = index
+        st.session_state["index_key"] = index_key
+    return st.session_state["index"]
 
 
 def ensure_session_state() -> None:
@@ -50,26 +74,45 @@ def ensure_session_state() -> None:
         st.session_state["agent_max_tokens"] = 0
     if "agent_stream" not in st.session_state:
         st.session_state["agent_stream"] = True
+    if "history_path" not in st.session_state:
+        st.session_state["history_path"] = ""
+    if "index" not in st.session_state:
+        st.session_state["index"] = None
+    if "index_key" not in st.session_state:
+        st.session_state["index_key"] = None
+
+
+def start_history_session(
+    history_dir: Path,
+    *,
+    data_dir: str,
+    chunk_max_chars: int,
+    model_platform: str,
+    model_type: str,
+    max_tokens: int,
+    stream: bool,
+) -> Path:
+    path = new_session_path(history_dir)
+    meta = {
+        "data_dir": data_dir,
+        "chunk_max_chars": chunk_max_chars,
+        "model_platform": model_platform,
+        "model_type": model_type,
+        "max_tokens": max_tokens,
+        "stream": stream,
+    }
+    init_session(path, meta)
+    return path
 
 
 def main() -> None:
     st.set_page_config(page_title="Local File Agent", layout="wide")
     config = load_config()
     ensure_session_state()
+    history_dir = ensure_history_dir()
 
-    st.sidebar.header("Index Settings")
-    data_dir = st.sidebar.text_input(
-        "Data directory", value=str(config.data_dir)
-    )
-    chunk_max_chars = st.sidebar.number_input(
-        "Chunk max chars",
-        min_value=200,
-        max_value=5000,
-        value=int(config.chunk_max_chars),
-        step=100,
-    )
-    if st.sidebar.button("Rebuild index"):
-        build_index.clear()
+    st.sidebar.header("Index")
+    rebuild_index = st.sidebar.button("Rebuild index")
 
     st.sidebar.header("Model Settings")
     platform_values = [p.value for p in ModelPlatformType]
@@ -111,8 +154,27 @@ def main() -> None:
         "Stream output", value=bool(config.stream)
     )
 
+    st.sidebar.header("History")
+    sessions = list_sessions(history_dir)
+    history_options = ["(new session)"] + [session.label for session in sessions]
+    selected_history = st.sidebar.selectbox(
+        "Saved sessions", options=history_options
+    )
+    if st.sidebar.button("Load history"):
+        if selected_history != "(new session)" and sessions:
+            session_index = history_options.index(selected_history) - 1
+            session_path = sessions[session_index].path
+            st.session_state["messages"] = load_messages(session_path)
+            st.session_state["history_path"] = str(session_path)
+            if st.session_state["agent"] is not None:
+                st.session_state["agent"].reset()
+
     index = build_index(
-        data_dir, int(chunk_max_chars), int(config.snippet_chars)
+        data_dir=config.data_dir,
+        index_dir=config.index_dir,
+        chunk_max_chars=int(config.chunk_max_chars),
+        snippet_chars=int(config.snippet_chars),
+        force_rebuild=rebuild_index,
     )
     stats = index.stats()
     st.sidebar.caption(
@@ -123,8 +185,9 @@ def main() -> None:
 
     if (
         st.session_state["agent"] is None
-        or st.session_state["agent_data_dir"] != data_dir
-        or st.session_state["agent_chunk_max"] != int(chunk_max_chars)
+        or st.session_state["agent_data_dir"] != str(config.data_dir)
+        or st.session_state["agent_chunk_max"]
+        != int(config.chunk_max_chars)
         or st.session_state["agent_model_platform"] != selected_platform
         or st.session_state["agent_model_type"] != model_type_value
         or st.session_state["agent_max_tokens"] != int(config.max_tokens)
@@ -138,13 +201,48 @@ def main() -> None:
         )
         tools = LocalDocTools(index)
         st.session_state["agent"] = build_agent(tools, config)
-        st.session_state["agent_data_dir"] = data_dir
-        st.session_state["agent_chunk_max"] = int(chunk_max_chars)
+        st.session_state["agent_data_dir"] = str(config.data_dir)
+        st.session_state["agent_chunk_max"] = int(config.chunk_max_chars)
         st.session_state["agent_model_platform"] = selected_platform
         st.session_state["agent_model_type"] = model_type_value
         st.session_state["agent_max_tokens"] = int(config.max_tokens)
         st.session_state["agent_stream"] = bool(enable_stream)
         st.session_state["messages"] = []
+        history_path = start_history_session(
+            history_dir,
+            data_dir=str(config.data_dir),
+            chunk_max_chars=int(config.chunk_max_chars),
+            model_platform=selected_platform,
+            model_type=model_type_value,
+            max_tokens=int(config.max_tokens),
+            stream=bool(enable_stream),
+        )
+        st.session_state["history_path"] = str(history_path)
+
+    if not st.session_state["history_path"]:
+        history_path = start_history_session(
+            history_dir,
+            data_dir=str(config.data_dir),
+            chunk_max_chars=int(config.chunk_max_chars),
+            model_platform=selected_platform,
+            model_type=model_type_value,
+            max_tokens=int(config.max_tokens),
+            stream=bool(enable_stream),
+        )
+        st.session_state["history_path"] = str(history_path)
+
+    history_path_value = st.session_state.get("history_path", "")
+    if history_path_value and st.session_state["messages"]:
+        history_path = Path(history_path_value)
+        if not load_messages(history_path):
+            for message in st.session_state["messages"]:
+                append_history_message(
+                    history_path,
+                    message.get("role", "assistant"),
+                    message.get("content", ""),
+                    reasoning=message.get("reasoning", ""),
+                    tool_calls=message.get("tool_calls", []) or [],
+                )
 
     st.title("Local File Analysis Agent")
 
@@ -152,6 +250,16 @@ def main() -> None:
         st.session_state["messages"] = []
         if st.session_state["agent"] is not None:
             st.session_state["agent"].reset()
+        history_path = start_history_session(
+            history_dir,
+            data_dir=str(config.data_dir),
+            chunk_max_chars=int(config.chunk_max_chars),
+            model_platform=selected_platform,
+            model_type=model_type_value,
+            max_tokens=int(config.max_tokens),
+            stream=bool(enable_stream),
+        )
+        st.session_state["history_path"] = str(history_path)
 
     for message in st.session_state["messages"]:
         with st.chat_message(message["role"]):
@@ -173,6 +281,11 @@ def main() -> None:
         st.session_state["messages"].append(
             {"role": "user", "content": user_input}
         )
+        history_path_value = st.session_state.get("history_path", "")
+        if history_path_value:
+            append_history_message(
+                Path(history_path_value), "user", user_input
+            )
         with st.chat_message("user"):
             st.markdown(user_input)
 
@@ -263,6 +376,15 @@ def main() -> None:
                 "tool_calls": tool_calls,
             }
         )
+        history_path_value = st.session_state.get("history_path", "")
+        if history_path_value:
+            append_history_message(
+                Path(history_path_value),
+                "assistant",
+                assistant_text,
+                reasoning=reasoning,
+                tool_calls=tool_calls,
+            )
 
 
 if __name__ == "__main__":

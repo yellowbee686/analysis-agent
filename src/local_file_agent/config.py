@@ -26,7 +26,9 @@ class AppConfig:
 
 def load_config() -> AppConfig:
     data_dir = Path(os.environ.get("LOCAL_AGENT_DATA_DIR", "data"))
-    index_dir = Path(os.environ.get("LOCAL_AGENT_INDEX_DIR", ".context"))
+    index_dir = Path(
+        os.environ.get("LOCAL_AGENT_INDEX_DIR", "cache/indices")
+    )
     chunk_max_chars = int(
         os.environ.get("LOCAL_AGENT_CHUNK_MAX_CHARS", "1200")
     )

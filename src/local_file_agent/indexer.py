@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,17 +59,21 @@ class LocalIndex:
         root_dir: Path,
         chunk_max_chars: int = 1200,
         snippet_chars: int = 400,
+        index_dir: Path | None = None,
     ):
-        self.root_dir = root_dir
+        self.root_dir = root_dir.resolve()
         self.chunk_max_chars = chunk_max_chars
         self.snippet_chars = snippet_chars
+        self.index_dir = index_dir
         self.chunks: List[DocChunk] = []
         self.files: List[Path] = []
         self.total_chars = 0
         self._bm25 = None
         self._bm25_tokens: List[List[str]] = []
 
-    def build(self) -> None:
+    def build(self, force_rebuild: bool = False) -> None:
+        if not force_rebuild and self._load_cache():
+            return
         self.files = find_markdown_files(self.root_dir)
         chunks: List[DocChunk] = []
         total_chars = 0
@@ -101,6 +107,7 @@ class LocalIndex:
         self.chunks = chunks
         self.total_chars = total_chars
         self._build_bm25_index()
+        self._save_cache()
 
     def _split_large_chunk(
         self, path: str, heading: str, text: str, start_line: int
@@ -230,3 +237,78 @@ class LocalIndex:
             "chunk_count": len(self.chunks),
             "total_chars": self.total_chars,
         }
+
+    def _cache_path(self) -> Path | None:
+        if not self.index_dir:
+            return None
+        key_material = "|".join(
+            [
+                str(self.root_dir),
+                str(self.chunk_max_chars),
+                str(self.snippet_chars),
+            ]
+        )
+        digest = hashlib.sha256(
+            key_material.encode("utf-8")
+        ).hexdigest()[:12]
+        return self.index_dir / f"index_{digest}.json"
+
+    def _load_cache(self) -> bool:
+        cache_path = self._cache_path()
+        if not cache_path or not cache_path.exists():
+            return False
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if payload.get("version") != 1:
+            return False
+        if payload.get("root_dir") != str(self.root_dir):
+            return False
+        if payload.get("chunk_max_chars") != self.chunk_max_chars:
+            return False
+        if payload.get("snippet_chars") != self.snippet_chars:
+            return False
+        self.files = [Path(p) for p in payload.get("files", [])]
+        self.total_chars = int(payload.get("total_chars", 0))
+        self.chunks = [
+            DocChunk(
+                path=chunk["path"],
+                heading=chunk["heading"],
+                text=chunk["text"],
+                start_line=int(chunk["start_line"]),
+            )
+            for chunk in payload.get("chunks", [])
+        ]
+        self._build_bm25_index()
+        return True
+
+    def _save_cache(self) -> None:
+        cache_path = self._cache_path()
+        if not cache_path:
+            return
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "root_dir": str(self.root_dir),
+                "chunk_max_chars": self.chunk_max_chars,
+                "snippet_chars": self.snippet_chars,
+                "files": [str(path) for path in self.files],
+                "total_chars": self.total_chars,
+                "chunks": [
+                    {
+                        "path": chunk.path,
+                        "heading": chunk.heading,
+                        "text": chunk.text,
+                        "start_line": chunk.start_line,
+                    }
+                    for chunk in self.chunks
+                ],
+            }
+            cache_path.write_text(
+                json.dumps(payload, ensure_ascii=True),
+                encoding="utf-8",
+            )
+        except OSError:
+            return

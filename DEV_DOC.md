@@ -172,6 +172,7 @@ src/local_file_agent/
 - `st.cache_data` 使用 pickle，有安全风险，避免缓存不可信输入。
 - Streamlit 会话状态在页面刷新、URL 跳转时会重置，需要在 UI 设计上规避。
 - 大目录与大文件解析可能造成卡顿，后续需异步/增量索引。
+- 索引会缓存到 `cache/indices`，数据目录变更后需手动点击 `Rebuild index`。
 
 ---
 
@@ -186,6 +187,9 @@ OPENAI_API_KEY=your_key_here
 ```
 
 说明：
+- `LOCAL_AGENT_DATA_DIR` 指定文档目录（默认 `data`）。
+- `LOCAL_AGENT_CHUNK_MAX_CHARS` 指定分块上限（默认 `1200`）。
+- `LOCAL_AGENT_INDEX_DIR` 指定索引缓存目录（默认 `cache/indices`）。
 - 未设置时回退到 CAMEL 默认值（由 `DEFAULT_MODEL_PLATFORM_TYPE` 与 `DEFAULT_MODEL_TYPE` 控制）。
 - 可使用 `LOCAL_AGENT_SYSTEM_PROMPT` 覆盖系统提示词（可选）。
 - `LOCAL_AGENT_MAX_TOKENS` 默认 65535，用于避免 CAMEL 关于 `max_tokens` 的警告。
