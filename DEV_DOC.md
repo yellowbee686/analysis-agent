@@ -300,6 +300,12 @@ LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json
 
 详见 `mcp_servers/CbetaMCP/readme.md`
 
+**MCP 超时配置**：
+- MCP 工具执行默认超时为 60 秒（在 `mcp.py` 中配置）
+- camel-ai MCPClient 默认超时是 10 秒，对于慢速 API（如 CBETA）会导致超时
+- 如遇到 "Timed out while waiting for response to ClientRequest" 错误，可增加超时时间
+- 注意：工具超时后，camel 框架可能会出现消息格式错误（缺少 assistant tool_calls），这是上游 bug
+
 **测试脚本**：
 ```bash
 # 测试 GPT
