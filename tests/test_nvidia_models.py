@@ -38,17 +38,17 @@ logger = logging.getLogger(__name__)
 
 # Models to test from base.yaml
 NVIDIA_MODELS = [
-    "deepseek-ai/deepseek-v3.2",  # General purpose (fast, no thinking)
-    "deepseek-ai/deepseek-r1",     # Reasoning model (has thinking)
-    "minimaxai/minimax-m2.1",      # Has built-in thinking (<think> tags)
+    "deepseek-ai/deepseek-v3.2",  # Thinking enabled via extra_body
+    "minimaxai/minimax-m2.1",      # Has built-in thinking (<think> tags in content)
     "z-ai/glm4.7",                 # May have thinking
     "openai/gpt-oss-120b",         # Has reasoning_effort param
 ]
 
 # Models with built-in thinking/reasoning capability
 REASONING_MODELS = [
-    "deepseek-ai/deepseek-r1",
+    "deepseek-ai/deepseek-v3.2",  # Returns reasoning_content when enabled
     "minimaxai/minimax-m2.1",
+    "z-ai/glm4.7",
     "openai/gpt-oss-120b",
 ]
 
