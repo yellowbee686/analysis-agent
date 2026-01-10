@@ -13,7 +13,11 @@ from camel.types import ModelPlatformType, ModelType
 from local_file_agent.config import AppConfig
 from local_file_agent.llm import build_openai_clients, get_model_params, select_endpoint
 from local_file_agent.mcp import get_mcp_tools, get_session_storage_path, is_mcp_connected
-from local_file_agent.tools import LocalDocTools
+from local_file_agent.tools import (
+    ChunkedFileTools,
+    LocalDocTools,
+    wrap_file_toolkit_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +40,17 @@ You also have access to Semantic Scholar tools for academic paper search:
 Use these tools when the user asks about academic papers, research, or citations.
 
 **Important: Handling Large Responses**
-Some MCP tools may return large responses that are saved to files instead of
+Some tools may return large responses that are saved to files instead of
 being returned directly. When you see a response with "status": "saved_to_file":
 1. Note the file_path in the response
-2. Use the search_files tool to search for specific content within the file
-3. Use the read_file tool if you need to read the full content
-This approach helps manage context and allows for efficient content search.
+2. Use search_in_file to find specific content within the saved file
+3. Use read_file_chunk to incrementally read through the file (set offset to
+   navigate through the file, e.g., offset=0 for start, then offset=8000 for
+   next chunk)
+4. Use get_file_info to check file size before reading
+
+This approach helps manage context and allows for efficient content search
+without overwhelming the conversation with large amounts of text.
 """.strip()
 
 
@@ -209,8 +218,27 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
         backup_enabled=False,  # No need for backups in cache
     )
     file_toolkit_tools = file_toolkit.get_tools()
+
+    # Wrap FileToolkit tools with size limits to avoid large responses
+    # polluting the context. If response is too large, saves to file and
+    # returns metadata.
+    file_toolkit_tools = wrap_file_toolkit_tools(
+        tools=file_toolkit_tools,
+        session_id=None,  # Uses default session storage
+        threshold=config.mcp_content_threshold,
+        tool_names=["search_files", "read_file"],
+    )
     logger.info("Adding %d FileToolkit tools to agent", len(file_toolkit_tools))
     tool_list.extend(file_toolkit_tools)
+
+    # Add ChunkedFileTools for reading large files in chunks
+    # These tools allow the model to incrementally read through large files
+    chunked_file_tools = ChunkedFileTools(
+        working_directory=str(file_toolkit_dir),
+    )
+    chunked_tools = chunked_file_tools.get_tools()
+    logger.info("Adding %d ChunkedFileTools to agent", len(chunked_tools))
+    tool_list.extend(chunked_tools)
 
     # Add SemanticScholarToolkit for academic paper search
     # This is more general than GoogleScholarToolkit which requires a specific author
