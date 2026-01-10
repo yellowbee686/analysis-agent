@@ -37,10 +37,51 @@ from local_file_agent.history import (  # noqa: E402
     load_messages,
     new_session_path,
 )
-from camel.agents.chat_agent import StreamingChatAgentResponse  # noqa: E402
+from camel.agents.chat_agent import (  # noqa: E402
+    StreamingChatAgentResponse,
+    AsyncStreamingChatAgentResponse,
+)
 from camel.messages import BaseMessage  # noqa: E402
 from local_file_agent.tools import LocalDocTools  # noqa: E402
 from camel.types import ModelPlatformType, OpenAIBackendRole  # noqa: E402
+
+
+def run_agent_step_async(agent, user_input: str):
+    """Run agent step asynchronously to support MCP tools.
+    
+    MCP tools with streamable-http transport require all calls to happen
+    in the same event loop. The synchronous streaming mode uses ThreadPoolExecutor
+    which creates separate threads with new event loops, causing MCP calls to hang.
+    
+    This function runs the agent step in async mode and collects results.
+    Uses the MCP event loop saved in session_state for compatibility.
+    """
+    async def _run():
+        response = await agent.astep(user_input)
+        if isinstance(response, AsyncStreamingChatAgentResponse):
+            # Collect streaming responses
+            results = []
+            async for partial in response:
+                results.append(partial)
+            return results
+        else:
+            return [response]
+    
+    # Use the event loop that was used for MCP connection
+    # This is critical for streamable-http transport compatibility
+    loop = st.session_state.get("mcp_event_loop")
+    if loop is None:
+        # Fallback: try to get or create an event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+    else:
+        # Ensure the MCP event loop is set as current
+        asyncio.set_event_loop(loop)
+    
+    return loop.run_until_complete(_run())
 
 
 def build_index(
@@ -116,8 +157,10 @@ def init_mcp_connection(config) -> bool:
 
     try:
         # Run async connection in event loop
+        # We create and save the event loop so it can be reused for MCP tool calls
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        st.session_state["mcp_event_loop"] = loop  # Save for reuse in agent calls
         toolkit = loop.run_until_complete(connect_mcp(config.mcp_config_path))
         if toolkit is not None:
             st.session_state["mcp_connected"] = True
@@ -585,15 +628,22 @@ def main() -> None:
 
             try:
                 logger.info("Sending user input to agent: %s...", user_input[:50])
-                response = agent.step(user_input)
-                logger.info("Agent response received, type: %s", type(response).__name__)
                 assistant_text = ""
                 reasoning = ""
                 tool_calls = []
                 seen_tool_calls = set()
 
-                if isinstance(response, StreamingChatAgentResponse):
-                    for partial in response:
+                # Check if MCP is enabled - if so, use async mode to avoid
+                # cross-event-loop issues with streamable-http transport
+                use_async_mode = is_mcp_connected()
+                
+                if use_async_mode:
+                    # Use async mode for MCP tools compatibility
+                    logger.info("Using async mode for MCP tools compatibility")
+                    results = run_agent_step_async(agent, user_input)
+                    logger.info("Async agent response received, %d results", len(results))
+                    
+                    for partial in results:
                         if partial.msg:
                             assistant_text = partial.msg.content or ""
                             content_placeholder.markdown(assistant_text)
@@ -617,32 +667,63 @@ def main() -> None:
                                 continue
                             seen_tool_calls.add(key)
                             tool_calls.append(record_dict)
-                            render_tools(tool_calls)
-                else:
-                    assistant_text = (
-                        response.msg.content
-                        if response.msg
-                        else "(no response)"
-                    )
-                    reasoning = (
-                        response.msg.reasoning_content
-                        if response.msg and response.msg.reasoning_content
-                        else ""
-                    )
-                    tool_calls = []
-                    for record in response.info.get("tool_calls", []) or []:
-                        if hasattr(record, "as_dict"):
-                            tool_calls.append(record.as_dict())
-                        elif hasattr(record, "model_dump"):
-                            tool_calls.append(record.model_dump())
-                        else:
-                            tool_calls.append(record)
-                    content_placeholder.markdown(assistant_text)
-                    if reasoning:
-                        with reasoning_placeholder.container():
-                            st.markdown("**Think summary**")
-                            st.markdown(reasoning)
                     render_tools(tool_calls)
+                else:
+                    # Use sync mode for non-MCP scenarios
+                    response = agent.step(user_input)
+                    logger.info("Agent response received, type: %s", type(response).__name__)
+
+                    if isinstance(response, StreamingChatAgentResponse):
+                        for partial in response:
+                            if partial.msg:
+                                assistant_text = partial.msg.content or ""
+                                content_placeholder.markdown(assistant_text)
+                                if partial.msg.reasoning_content:
+                                    reasoning = partial.msg.reasoning_content
+                                    with reasoning_placeholder.container():
+                                        st.markdown("**Think summary**")
+                                        st.markdown(reasoning)
+                            for record in partial.info.get("tool_calls", []) or []:
+                                if hasattr(record, "as_dict"):
+                                    record_dict = record.as_dict()
+                                elif hasattr(record, "model_dump"):
+                                    record_dict = record.model_dump()
+                                else:
+                                    record_dict = record
+                                key = (
+                                    record_dict.get("tool_call_id")
+                                    or f"{record_dict.get('tool_name')}:{record_dict.get('args')}"
+                                )
+                                if key in seen_tool_calls:
+                                    continue
+                                seen_tool_calls.add(key)
+                                tool_calls.append(record_dict)
+                                render_tools(tool_calls)
+                    else:
+                        assistant_text = (
+                            response.msg.content
+                            if response.msg
+                            else "(no response)"
+                        )
+                        reasoning = (
+                            response.msg.reasoning_content
+                            if response.msg and response.msg.reasoning_content
+                            else ""
+                        )
+                        tool_calls = []
+                        for record in response.info.get("tool_calls", []) or []:
+                            if hasattr(record, "as_dict"):
+                                tool_calls.append(record.as_dict())
+                            elif hasattr(record, "model_dump"):
+                                tool_calls.append(record.model_dump())
+                            else:
+                                tool_calls.append(record)
+                        content_placeholder.markdown(assistant_text)
+                        if reasoning:
+                            with reasoning_placeholder.container():
+                                st.markdown("**Think summary**")
+                                st.markdown(reasoning)
+                        render_tools(tool_calls)
             except Exception as exc:
                 assistant_text = f"Error: {exc}"
                 reasoning = ""

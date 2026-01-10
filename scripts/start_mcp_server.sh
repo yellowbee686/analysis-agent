@@ -14,6 +14,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 MCP_DIR="$PROJECT_ROOT/mcp_servers/CbetaMCP"
+LOG_DIR="${LOG_DIR:-$PROJECT_ROOT/cache}"
+PID_FILE="$LOG_DIR/mcp_server.pid"
 
 # Default port (use 8001 to avoid conflict with Streamlit on 8501)
 export APP_PORT="${MCP_PORT:-8001}"
@@ -34,10 +36,11 @@ pip install -q -r requirements.txt
 echo "🚀 Starting CbetaMCP server on http://localhost:$APP_PORT/mcp"
 
 if [ "$1" == "--bg" ]; then
-    nohup python main.py > "$PROJECT_ROOT/cache/mcp_server.log" 2>&1 &
-    echo $! > "$PROJECT_ROOT/cache/mcp_server.pid"
-    echo "✅ MCP server started in background (PID: $(cat "$PROJECT_ROOT/cache/mcp_server.pid"))"
-    echo "📝 Logs: $PROJECT_ROOT/cache/mcp_server.log"
+    mkdir -p "$LOG_DIR"
+    nohup python main.py > "$LOG_DIR/mcp_server.log" 2>&1 &
+    echo $! > "$PID_FILE"
+    echo "✅ MCP server started in background (PID: $(cat "$PID_FILE"))"
+    echo "📝 Logs: $LOG_DIR/mcp_server.log"
 else
     python main.py
 fi

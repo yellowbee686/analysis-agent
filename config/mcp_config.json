@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "cbeta": {
-      "url": "http://localhost:8001/mcp/sse",
-      "type": "sse",
+      "url": "http://localhost:8001/mcp/",
+      "type": "streamable_http",
       "description": "CBETA Buddhist Scripture Search MCP Server"
     }
   }

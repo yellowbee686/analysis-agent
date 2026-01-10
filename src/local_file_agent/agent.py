@@ -23,7 +23,8 @@ found, say so clearly.
 
 You also have access to CBETA Buddhist Scripture tools (if enabled) for
 searching and retrieving Buddhist texts. Use these tools when the user asks
-about Buddhist scriptures, sutras, or related topics.
+about Buddhist scriptures, sutras, or related topics. When calling CBETA MCP
+tools, provide parameters in Traditional Chinese.
 """.strip()
 
 

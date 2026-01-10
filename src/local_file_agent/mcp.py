@@ -49,9 +49,9 @@ async def connect_mcp(config_path: Path | str) -> MCPToolkit:
 
     logger.info("Connecting to MCP servers from config: %s", config_path)
     try:
-        # Use a longer timeout (60s) for MCP tool execution
+        # Use a 30s timeout for MCP tool execution
         # The default 10s is too short for slow APIs like CBETA
-        _mcp_toolkit = MCPToolkit(config_path=str(config_path), timeout=60.0)
+        _mcp_toolkit = MCPToolkit(config_path=str(config_path), timeout=30.0)
         await _mcp_toolkit.connect()
         logger.info("MCP toolkit connected successfully")
         return _mcp_toolkit

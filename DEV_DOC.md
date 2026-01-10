@@ -307,6 +307,26 @@ LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json
 - 如遇到 "Timed out while waiting for response to ClientRequest" 错误，可增加超时时间
 - 注意：工具超时后，camel 框架可能会出现消息格式错误（缺少 assistant tool_calls），这是上游 bug
 
+**MCP streamable-http 事件循环问题及修复** (2026-01-10)：
+- **问题**：CAMEL 的同步流式响应使用 `ThreadPoolExecutor` 执行工具调用，每个线程会创建新的事件循环。但 MCP 的 `streamable-http` 传输是持久连接，session 绑定到原始事件循环。从新线程/事件循环调用会导致请求永远无法完成（超时）。
+- **症状**：MCP 工具调用超时 30-60 秒，日志显示 "Timed out while waiting for response to ClientRequest"，但直接调用 MCP API 只需几秒。
+- **修复**：在 `app.py` 中：
+  1. MCP 连接时保存事件循环到 `st.session_state["mcp_event_loop"]`
+  2. 新增 `run_agent_step_async()` 函数使用保存的事件循环运行 `agent.astep()`
+  3. 当 MCP 启用时，使用异步模式执行 agent step，确保所有 MCP 调用在同一事件循环中执行
+- **配置**：MCP 配置改为使用 `streamable_http` 类型（更高效）：
+  ```json
+  {
+    "mcpServers": {
+      "cbeta": {
+        "url": "http://localhost:8001/mcp/",
+        "type": "streamable_http",
+        "description": "CBETA Buddhist Scripture Search MCP Server"
+      }
+    }
+  }
+  ```
+
 **测试脚本**：
 ```bash
 # 测试 GPT
