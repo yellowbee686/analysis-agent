@@ -46,6 +46,16 @@ from local_file_agent.tools import LocalDocTools  # noqa: E402
 from camel.types import ModelPlatformType, OpenAIBackendRole  # noqa: E402
 
 
+def _merge_stream_text(current: str, incoming: str | None) -> str:
+    if not incoming:
+        return current
+    if not current:
+        return incoming
+    if incoming.startswith(current):
+        return incoming
+    return current + incoming
+
+
 def run_agent_step_async(agent, user_input: str):
     """Run agent step asynchronously to support MCP tools.
     
@@ -632,6 +642,8 @@ def main() -> None:
                 reasoning = ""
                 tool_calls = []
                 seen_tool_calls = set()
+                stream_mode = None
+                reasoning_stream_mode = None
 
                 # Check if MCP is enabled - if so, use async mode to avoid
                 # cross-event-loop issues with streamable-http transport
@@ -645,10 +657,44 @@ def main() -> None:
                     
                     for partial in results:
                         if partial.msg:
-                            assistant_text = partial.msg.content or ""
+                            content_delta = partial.msg.content
+                            if (
+                                stream_mode is None
+                                and assistant_text
+                                and content_delta
+                            ):
+                                stream_mode = (
+                                    "accumulated"
+                                    if content_delta.startswith(assistant_text)
+                                    else "delta"
+                                )
+                                logger.debug(
+                                    "Detected streaming mode for content: %s",
+                                    stream_mode,
+                                )
+                            assistant_text = _merge_stream_text(
+                                assistant_text, content_delta
+                            )
                             content_placeholder.markdown(assistant_text)
-                            if partial.msg.reasoning_content:
-                                reasoning = partial.msg.reasoning_content
+                            reasoning_delta = partial.msg.reasoning_content
+                            if reasoning_delta is not None:
+                                if (
+                                    reasoning_stream_mode is None
+                                    and reasoning
+                                    and reasoning_delta
+                                ):
+                                    reasoning_stream_mode = (
+                                        "accumulated"
+                                        if reasoning_delta.startswith(reasoning)
+                                        else "delta"
+                                    )
+                                    logger.debug(
+                                        "Detected streaming mode for reasoning: %s",
+                                        reasoning_stream_mode,
+                                    )
+                                reasoning = _merge_stream_text(
+                                    reasoning, reasoning_delta
+                                )
                                 with reasoning_placeholder.container():
                                     st.markdown("**Think summary**")
                                     st.markdown(reasoning)
@@ -676,10 +722,44 @@ def main() -> None:
                     if isinstance(response, StreamingChatAgentResponse):
                         for partial in response:
                             if partial.msg:
-                                assistant_text = partial.msg.content or ""
+                                content_delta = partial.msg.content
+                                if (
+                                    stream_mode is None
+                                    and assistant_text
+                                    and content_delta
+                                ):
+                                    stream_mode = (
+                                        "accumulated"
+                                        if content_delta.startswith(assistant_text)
+                                        else "delta"
+                                    )
+                                    logger.debug(
+                                        "Detected streaming mode for content: %s",
+                                        stream_mode,
+                                    )
+                                assistant_text = _merge_stream_text(
+                                    assistant_text, content_delta
+                                )
                                 content_placeholder.markdown(assistant_text)
-                                if partial.msg.reasoning_content:
-                                    reasoning = partial.msg.reasoning_content
+                                reasoning_delta = partial.msg.reasoning_content
+                                if reasoning_delta is not None:
+                                    if (
+                                        reasoning_stream_mode is None
+                                        and reasoning
+                                        and reasoning_delta
+                                    ):
+                                        reasoning_stream_mode = (
+                                            "accumulated"
+                                            if reasoning_delta.startswith(reasoning)
+                                            else "delta"
+                                        )
+                                        logger.debug(
+                                            "Detected streaming mode for reasoning: %s",
+                                            reasoning_stream_mode,
+                                        )
+                                    reasoning = _merge_stream_text(
+                                        reasoning, reasoning_delta
+                                    )
                                     with reasoning_placeholder.container():
                                         st.markdown("**Think summary**")
                                         st.markdown(reasoning)

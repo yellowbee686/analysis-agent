@@ -183,6 +183,7 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
         system_message=system_message,
         model=model,
         tools=tool_list,
+        stream_accumulate=False,
     )
     agent.reset()
     logger.info("Agent built successfully")
