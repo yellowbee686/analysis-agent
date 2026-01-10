@@ -183,7 +183,10 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
     client = None
     async_client = None
     if endpoint:
-        client, async_client = build_openai_clients(endpoint)
+        client, async_client = build_openai_clients(
+            endpoint,
+            use_azure=endpoint.use_azure,
+        )
 
     logger.debug("Creating model via ModelFactory...")
     model = ModelFactory.create(

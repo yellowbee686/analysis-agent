@@ -211,20 +211,21 @@ mcp_servers/
 
 ---
 
-## 8. 配置建议（.env）
+## 8. 配置建议（.env / base.yaml）
 
-使用本地 `.env` 管理模型与密钥，避免写入源码与 UI：
+使用本地 `.env` 管理运行时配置；API key 与端点配置写入私有
+`models/model_config/base.yaml`（不纳入版本控制）：
 
 ```
 LOCAL_AGENT_MODEL_PLATFORM=openai
-LOCAL_AGENT_MODEL_TYPE=gpt-4.1-mini-2025-04-14
-OPENAI_API_KEY=your_key_here
+LOCAL_AGENT_MODEL_TYPE=deepseek-ai/deepseek-v3.2
 ```
 
 说明：
 - `LOCAL_AGENT_DATA_DIR` 指定文档目录（默认 `data`）。
 - `LOCAL_AGENT_CHUNK_MAX_CHARS` 指定分块上限（默认 `1200`）。
 - `LOCAL_AGENT_INDEX_DIR` 指定索引缓存目录（默认 `cache/indices`）。
+- `LOCAL_AGENT_MODEL_CONFIG` 指定模型配置文件路径（默认使用 `models/model_config/base.yaml`，不存在则回退到 `base.yaml.example`）。
 - 未设置时回退到 CAMEL 默认值（由 `DEFAULT_MODEL_PLATFORM_TYPE` 与 `DEFAULT_MODEL_TYPE` 控制）。
 - 可使用 `LOCAL_AGENT_SYSTEM_PROMPT` 覆盖系统提示词（可选）。
 - `LOCAL_AGENT_MAX_TOKENS` 默认 65535，用于避免 CAMEL 关于 `max_tokens` 的警告。
@@ -234,21 +235,21 @@ OPENAI_API_KEY=your_key_here
   - 设为空字符串 `""` 可让所有模型使用流式输出。
 
 ### 8.1 多 Key 随机采样（参考 ttlive_strategy_agent）
-当前项目支持从 `models/model_config/base.yaml` 读取模型端点列表，并按 `weight` 随机采样 API Key 与 Base URL。
-建议在 `.env` 中配置 key，配置文件只保留 `api_key_env` 引用。
+当前项目支持从 `models/model_config/base.yaml` 读取模型端点列表（如不存在则回退到
+`models/model_config/base.yaml.example`），并按 `weight` 随机采样 API Key 与 Base URL。
+可用 `LOCAL_AGENT_MODEL_CONFIG` 指定自定义配置文件路径。
+建议将 API key 直接写入 `base.yaml`，配置文件本身保持私有。
 
-示例模型（内置）：
-- `gemini-3-pro-preview-new`
-- `gpt-5.2-2025-12-11`
+示例模型（base.yaml.example）：
+- `deepseek-ai/deepseek-v3.2`
+- `minimaxai/minimax-m2.1`
+- `z-ai/glm4.7`
+- `openai/gpt-oss-120b`
 
-当前端点配置采用 `.env` 提供 `base_url` 与 `weight`：
-```
-GEMINI_3_PRO_BASE_URL_1=...
-GEMINI_3_PRO_API_KEY_1=...
-GEMINI_3_PRO_WEIGHT_1=1
-```
+当前端点配置使用 `base_url` / `api_key` / `weight`，并可通过 `use_azure`
+指定客户端类型（AzureOpenAI / OpenAI）。
 
-**禁用无效 Key**：将 `weight` 设为 `0` 可禁用该 endpoint，如：`GPT5_2_WEIGHT_1=0`
+**禁用无效 Key**：将 `weight` 设为 `0` 可禁用该 endpoint。
 
 可用 `LOCAL_AGENT_REQUEST_TIMEOUT` 覆盖请求超时时间（默认 120 秒）。
 可用 `LOCAL_AGENT_AZURE_API_VERSION` 覆盖默认 Azure API 版本（默认 `2024-12-01-preview`）。

@@ -12,3 +12,5 @@ __pycache__
 *.log
 log/
 .env
+*.base.yaml
+models/model_config/base.yaml

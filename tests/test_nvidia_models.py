@@ -1,4 +1,4 @@
-"""Test NVIDIA API models configured in base.yaml.
+"""Test NVIDIA API models configured in base.yaml / base.yaml.example.
 
 This module provides both pytest-compatible tests and a standalone script
 for testing NVIDIA API model connectivity and parameter passing.
@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -32,11 +33,25 @@ from local_file_agent.llm import (
 )
 
 
+EXAMPLE_CONFIG_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "models"
+    / "model_config"
+    / "base.yaml.example"
+)
+PRIVATE_CONFIG_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "models"
+    / "model_config"
+    / "base.yaml"
+)
+
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
-# Models to test from base.yaml
+# Models to test from base.yaml / base.yaml.example
 NVIDIA_MODELS = [
     "deepseek-ai/deepseek-v3.2",  # Thinking enabled via extra_body
     "minimaxai/minimax-m2.1",      # Has built-in thinking (<think> tags in content)
@@ -55,20 +70,40 @@ REASONING_MODELS = [
 TEST_MESSAGE = "Hello! Please respond with 'OK' and nothing else."
 
 
+def _has_real_nvidia_key(config_path: Path) -> bool:
+    if not config_path.exists():
+        return False
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    models = data.get("models", {})
+    for model in NVIDIA_MODELS:
+        endpoints = models.get(model, {}).get("endpoints", [])
+        for endpoint in endpoints:
+            api_key = endpoint.get("api_key")
+            if api_key and api_key != "YOUR_NVIDIA_API_KEY":
+                return True
+    return False
+
+
+HAS_PRIVATE_NVIDIA_KEY = _has_real_nvidia_key(PRIVATE_CONFIG_PATH)
+
+
 # ============================================================================
 # Pytest tests (fast, don't require API)
 # ============================================================================
 
-def test_nvidia_model_endpoints_configured() -> None:
+def test_nvidia_model_endpoints_configured(monkeypatch) -> None:
     """Test that NVIDIA models have endpoints configured."""
+    monkeypatch.setenv("LOCAL_AGENT_MODEL_CONFIG", str(EXAMPLE_CONFIG_PATH))
     for model in NVIDIA_MODELS:
         endpoint = select_endpoint(model)
         assert endpoint is not None, f"No endpoint for {model}"
         assert endpoint.base_url == "https://integrate.api.nvidia.com/v1"
+        assert endpoint.api_key == "YOUR_NVIDIA_API_KEY"
 
 
-def test_nvidia_model_params_configured() -> None:
+def test_nvidia_model_params_configured(monkeypatch) -> None:
     """Test that NVIDIA models have custom params configured."""
+    monkeypatch.setenv("LOCAL_AGENT_MODEL_CONFIG", str(EXAMPLE_CONFIG_PATH))
     for model in NVIDIA_MODELS:
         params = get_model_params(model)
         assert "temperature" in params, f"No temperature for {model}"
@@ -82,12 +117,13 @@ def test_nvidia_model_params_configured() -> None:
 # ============================================================================
 
 @pytest.mark.skipif(
-    not os.environ.get("NVIDIA_API_KEY"),
-    reason="NVIDIA_API_KEY not set"
+    not HAS_PRIVATE_NVIDIA_KEY,
+    reason="Private base.yaml with a real NVIDIA API key not found",
 )
 @pytest.mark.parametrize("model_name", NVIDIA_MODELS[:2])  # Only test fast models
-def test_nvidia_model_api_call(model_name: str) -> None:
+def test_nvidia_model_api_call(model_name: str, monkeypatch) -> None:
     """Test actual API call to NVIDIA models (requires API key)."""
+    monkeypatch.setenv("LOCAL_AGENT_MODEL_CONFIG", str(PRIVATE_CONFIG_PATH))
     endpoint = select_endpoint(model_name)
     assert endpoint is not None
     
@@ -163,15 +199,23 @@ def main():
     """Run model tests as standalone script."""
     from dotenv import load_dotenv
     load_dotenv()
-    
-    # Check if NVIDIA API key is set
-    nvidia_key = os.environ.get("NVIDIA_API_KEY")
-    if not nvidia_key:
-        logger.error("NVIDIA_API_KEY environment variable is not set!")
-        logger.info("Please set it with: export NVIDIA_API_KEY=your_key_here")
+
+    config_path = Path(
+        os.environ.get(
+            "LOCAL_AGENT_MODEL_CONFIG",
+            "models/model_config/base.yaml",
+        )
+    ).expanduser()
+    if not config_path.exists():
+        config_path = config_path.with_name("base.yaml.example")
+
+    os.environ["LOCAL_AGENT_MODEL_CONFIG"] = str(config_path)
+    if not _has_real_nvidia_key(config_path):
+        logger.error(
+            "No real NVIDIA API key found in %s. Update base.yaml with your key.",
+            config_path,
+        )
         sys.exit(1)
-    
-    logger.info(f"NVIDIA_API_KEY is set: {nvidia_key[:8]}...{nvidia_key[-4:]}")
     
     # Allow testing specific model via CLI arg
     models_to_test = NVIDIA_MODELS

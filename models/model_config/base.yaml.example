@@ -1,39 +1,8 @@
+# Copy to base.yaml and fill in real API keys.
 model_provider: "base"
 models:
-  gemini-3-flash-preview:
-    endpoints:
-      - base_url_env: "GEMINI_3_FLASH_BASE_URL_1"
-        api_key_env: "GEMINI_3_FLASH_API_KEY_1"
-        weight_env: "GEMINI_3_FLASH_WEIGHT_1"
-    params:
-      temperature: 1.0
-
-  gemini-3-pro-preview-new:
-    endpoints:
-      - base_url_env: "GEMINI_3_PRO_BASE_URL_1"
-        api_key_env: "GEMINI_3_PRO_API_KEY_1"
-        weight_env: "GEMINI_3_PRO_WEIGHT_1"
-      - base_url_env: "GEMINI_3_PRO_BASE_URL_2"
-        api_key_env: "GEMINI_3_PRO_API_KEY_2"
-        weight_env: "GEMINI_3_PRO_WEIGHT_2"
-      - base_url_env: "GEMINI_3_PRO_BASE_URL_3"
-        api_key_env: "GEMINI_3_PRO_API_KEY_3"
-        weight_env: "GEMINI_3_PRO_WEIGHT_3"
-    params:
-      temperature: 1.0
-
-  gpt-5.2-2025-12-11:
-    endpoints:
-      - base_url_env: "GPT5_2_BASE_URL_1"
-        api_key_env: "GPT5_2_API_KEY_1"
-        weight_env: "GPT5_2_WEIGHT_1"
-      - base_url_env: "GPT5_2_BASE_URL_2"
-        api_key_env: "GPT5_2_API_KEY_2"
-        weight_env: "GPT5_2_WEIGHT_2"
-
   # NVIDIA API Models (https://integrate.api.nvidia.com/v1)
-  # Params reference: HuggingFace model cards
-  # Note: These are open-source models hosted on NVIDIA API
+  # Fill in your NVIDIA API key below.
 
   # DeepSeek V3.2 (HF: deepseek-ai/DeepSeek-V3.2)
   # Ref: https://huggingface.co/deepseek-ai/DeepSeek-V3.2
@@ -42,7 +11,9 @@ models:
   deepseek-ai/deepseek-v3.2:
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
-        api_key_env: "NVIDIA_API_KEY"
+        api_key: "YOUR_NVIDIA_API_KEY"
+        weight: 1
+        use_azure: false
     params:
       temperature: 1.0
       top_p: 0.95
@@ -56,7 +27,9 @@ models:
   minimaxai/minimax-m2.1:
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
-        api_key_env: "NVIDIA_API_KEY"
+        api_key: "YOUR_NVIDIA_API_KEY"
+        weight: 1
+        use_azure: false
     params:
       temperature: 1.0
       top_p: 0.95
@@ -67,7 +40,9 @@ models:
   z-ai/glm4.7:
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
-        api_key_env: "NVIDIA_API_KEY"
+        api_key: "YOUR_NVIDIA_API_KEY"
+        weight: 1
+        use_azure: false
     params:
       temperature: 1.0
       top_p: 0.95
@@ -78,8 +53,18 @@ models:
   openai/gpt-oss-120b:
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
-        api_key_env: "NVIDIA_API_KEY"
+        api_key: "YOUR_NVIDIA_API_KEY"
+        weight: 1
+        use_azure: false
     params:
       temperature: 1.0
       top_p: 1.0
       reasoning_effort: high
+
+  # Example custom model (OpenAI-compatible)
+  # my-openai-compatible-model:
+  #   endpoints:
+  #     - base_url: "https://example.com/v1"
+  #       api_key: "YOUR_API_KEY"
+  #       weight: 1
+  #       use_azure: false

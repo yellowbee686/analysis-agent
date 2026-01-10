@@ -23,6 +23,7 @@ class Endpoint:
     api_key: str
     weight: int = 1
     api_version: str | None = None
+    use_azure: bool | None = None
 
 
 class ModelConfig:
@@ -40,7 +41,7 @@ class ModelConfig:
         """Get all valid endpoints for a model.
 
         Returns:
-            List of Endpoint objects with resolved environment variables.
+            List of Endpoint objects from config.
         """
         models = self._config.get("models", {})
         if model_name not in models:
@@ -61,29 +62,14 @@ class ModelConfig:
 
         for i, endpoint in enumerate(endpoint_configs):
             base_url = endpoint.get("base_url")
-            base_url_env = endpoint.get("base_url_env")
-            if base_url_env:
-                base_url = os.environ.get(base_url_env, base_url)
-
             api_key = endpoint.get("api_key")
-            api_key_env = endpoint.get("api_key_env")
-            if api_key_env:
-                api_key = os.environ.get(api_key_env, api_key or "")
-
             weight = endpoint.get("weight", 1)
-            weight_env = endpoint.get("weight_env")
-            if weight_env:
-                weight_val = os.environ.get(weight_env)
-                if weight_val is not None:
-                    try:
-                        weight = int(weight_val)
-                    except ValueError:
-                        weight = 1
-
+            try:
+                weight = int(weight)
+            except (TypeError, ValueError):
+                weight = 1
             api_version = endpoint.get("api_version")
-            api_version_env = endpoint.get("api_version_env")
-            if api_version_env:
-                api_version = os.environ.get(api_version_env, api_version)
+            use_azure = endpoint.get("use_azure")
 
             if not base_url or not api_key:
                 logger.debug(
@@ -109,8 +95,9 @@ class ModelConfig:
                 Endpoint(
                     base_url=base_url,
                     api_key=api_key,
-                    weight=int(weight),
+                    weight=weight,
                     api_version=api_version,
+                    use_azure=use_azure,
                 )
             )
             logger.debug(
@@ -138,25 +125,39 @@ class ModelConfig:
         models = self._config.get("models", {})
         return sorted(models.keys())
 
+def _resolve_config_path() -> Path:
+    env_path = os.environ.get("LOCAL_AGENT_MODEL_CONFIG")
+    if env_path:
+        return Path(env_path).expanduser()
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    base_path = root_dir / "models" / "model_config" / "base.yaml"
+    if base_path.exists():
+        return base_path
+    return base_path.with_name("base.yaml.example")
 
-_DEFAULT_CONFIG_PATH = (
-    Path(__file__).resolve().parent.parent.parent
-    / "models"
-    / "model_config"
-    / "base.yaml"
-)
-_MODEL_CONFIG = ModelConfig(_DEFAULT_CONFIG_PATH)
+
+_MODEL_CONFIG: ModelConfig | None = None
+_MODEL_CONFIG_PATH: Path | None = None
+
+
+def _get_model_config() -> ModelConfig:
+    global _MODEL_CONFIG, _MODEL_CONFIG_PATH
+    config_path = _resolve_config_path()
+    if _MODEL_CONFIG is None or _MODEL_CONFIG_PATH != config_path:
+        _MODEL_CONFIG = ModelConfig(config_path)
+        _MODEL_CONFIG_PATH = config_path
+    return _MODEL_CONFIG
 
 
 def select_endpoint(model_name: str) -> Optional[Endpoint]:
     """Select an endpoint for the given model using weighted random selection."""
     logger.debug("Selecting endpoint for model: %s", model_name)
-    endpoints = _MODEL_CONFIG.get_endpoints(model_name)
+    endpoints = _get_model_config().get_endpoints(model_name)
 
     if not endpoints:
         logger.warning(
             "No valid endpoints found for model '%s'. "
-            "Check that the required environment variables are set.",
+            "Check that the model config file has valid endpoints.",
             model_name,
         )
         return None
@@ -259,7 +260,7 @@ def build_openai_clients(
 
 
 def list_models() -> list[str]:
-    return _MODEL_CONFIG.list_models()
+    return _get_model_config().list_models()
 
 
 def get_model_params(model_name: str) -> dict:
@@ -268,4 +269,4 @@ def get_model_params(model_name: str) -> dict:
     Returns:
         Dictionary of model parameters (temperature, top_p, etc.).
     """
-    return _MODEL_CONFIG.get_model_params(model_name)
+    return _get_model_config().get_model_params(model_name)

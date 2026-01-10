@@ -40,7 +40,8 @@ def main() -> None:
     logger.info("Available models: %s", available_models)
 
     model_name = args.model or os.environ.get(
-        "LOCAL_AGENT_MODEL_TYPE", "gemini-3-pro-preview-new"
+        "LOCAL_AGENT_MODEL_TYPE",
+        "deepseek-ai/deepseek-v3.2",
     )
     logger.info("Testing model: %s", model_name)
 
@@ -55,8 +56,18 @@ def main() -> None:
         endpoint.api_key[-3:] if endpoint.api_key and len(endpoint.api_key) > 8 else "",
     )
 
-    use_azure = not args.no_azure
-    logger.info("Using %s client", "AzureOpenAI" if use_azure else "OpenAI")
+    if args.no_azure:
+        use_azure = False
+    else:
+        use_azure = endpoint.use_azure
+
+    client_mode = "auto"
+    if use_azure is True:
+        client_mode = "AzureOpenAI"
+    elif use_azure is False:
+        client_mode = "OpenAI"
+
+    logger.info("Using %s client", client_mode)
 
     client, _ = build_openai_clients(endpoint, use_azure=use_azure)
 
