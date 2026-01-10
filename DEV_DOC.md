@@ -359,6 +359,15 @@ LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json
   - 如果是，过滤掉 "null" 类型，使用第一个非 null 类型作为 Python 类型
   - 这样 `str | None` 会被正确解析为 `str` 类型
 
+**并行工具调用消息格式问题修复** (2026-01-11)：
+- **问题**：当模型返回并行工具调用时（一次请求返回多个 tool_calls），CAMEL 为每个工具调用创建独立的 assistant 消息。但 OpenAI API 要求并行工具调用应该是**一个** assistant 消息包含**多个** tool_calls，否则部分 API（如 NVIDIA）会返回 500 错误 "No tool calls but found tool output"。
+- **症状**：工具调用后下一轮请求失败，日志显示 `InternalServerError: Error code: 500 - {'error': {'message': 'No tool calls but found tool output', ...}}`。
+- **修复**：在 `camel/camel/memories/context_creators/score_based.py` 的 `create_context` 方法中添加消息合并逻辑：
+  - 新增 `_merge_parallel_tool_calls()` 方法
+  - 检测连续的 assistant 消息（带 tool_calls 但无 content）
+  - 将它们合并为单个 assistant 消息，包含所有 tool_calls
+  - 这样发送给模型的消息格式符合 OpenAI API 规范
+
 **测试脚本**：
 ```bash
 # 测试 GPT
