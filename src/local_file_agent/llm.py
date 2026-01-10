@@ -167,19 +167,38 @@ def select_endpoint(model_name: str) -> Optional[Endpoint]:
     return selected
 
 
+def _should_use_azure(base_url: str) -> bool:
+    """Determine if Azure client should be used based on the base URL.
+
+    Returns False for known OpenAI-compatible APIs (NVIDIA, etc.).
+    """
+    openai_compatible_hosts = [
+        "integrate.api.nvidia.com",  # NVIDIA API
+        "api.openai.com",  # OpenAI
+    ]
+    for host in openai_compatible_hosts:
+        if host in base_url:
+            return False
+    return True
+
+
 def build_openai_clients(
     endpoint: Endpoint,
-    use_azure: bool = True,
+    use_azure: bool | None = None,
 ) -> tuple[AzureOpenAI | OpenAI, AsyncAzureOpenAI | AsyncOpenAI]:
     """Build OpenAI clients for the given endpoint.
 
     Args:
         endpoint: The endpoint configuration.
-        use_azure: If True, use AzureOpenAI client; otherwise use standard OpenAI client.
+        use_azure: If True, use AzureOpenAI client; if False, use standard OpenAI client.
+                   If None, auto-detect based on base_url.
 
     Returns:
         Tuple of (sync_client, async_client).
     """
+    if use_azure is None:
+        use_azure = _should_use_azure(endpoint.base_url)
+
     logger.debug(
         "Building %s clients for endpoint: base_url=%s, api_key=%s...%s",
         "AzureOpenAI" if use_azure else "OpenAI",

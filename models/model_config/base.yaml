@@ -26,3 +26,24 @@ models:
       - base_url_env: "GPT5_2_BASE_URL_2"
         api_key_env: "GPT5_2_API_KEY_2"
         weight_env: "GPT5_2_WEIGHT_2"
+
+  # NVIDIA API Models (https://integrate.api.nvidia.com/v1)
+  deepseek-ai/deepseek-v3.2:
+    endpoints:
+      - base_url: "https://integrate.api.nvidia.com/v1"
+        api_key_env: "NVIDIA_API_KEY"
+
+  minimaxai/minimax-m2.1:
+    endpoints:
+      - base_url: "https://integrate.api.nvidia.com/v1"
+        api_key_env: "NVIDIA_API_KEY"
+
+  z-ai/glm4.7:
+    endpoints:
+      - base_url: "https://integrate.api.nvidia.com/v1"
+        api_key_env: "NVIDIA_API_KEY"
+
+  openai/gpt-oss-120b:
+    endpoints:
+      - base_url: "https://integrate.api.nvidia.com/v1"
+        api_key_env: "NVIDIA_API_KEY"
