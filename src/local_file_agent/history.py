@@ -130,3 +130,22 @@ def delete_session(path: Path) -> None:
         return
     if path.is_file():
         path.unlink()
+
+
+def cleanup_empty_sessions(history_dir: Path) -> int:
+    """Delete sessions that have no user messages.
+
+    Returns the number of sessions deleted.
+    """
+    if not history_dir.exists():
+        return 0
+    deleted = 0
+    for path in list(history_dir.glob("*.jsonl")):
+        if not path.is_file():
+            continue
+        messages = load_messages(path)
+        has_user_message = any(m.get("role") == "user" for m in messages)
+        if not has_user_message:
+            path.unlink()
+            deleted += 1
+    return deleted

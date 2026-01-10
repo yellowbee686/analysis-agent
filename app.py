@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import html
 from pathlib import Path
 import sys
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 ROOT_DIR = Path(__file__).resolve().parent
 SRC_DIR = ROOT_DIR / "src"
@@ -19,6 +17,7 @@ from local_file_agent.indexer import LocalIndex  # noqa: E402
 from local_file_agent.llm import list_models  # noqa: E402
 from local_file_agent.history import (  # noqa: E402
     append_message as append_history_message,
+    cleanup_empty_sessions,
     delete_session,
     ensure_history_dir,
     init_session,
@@ -178,145 +177,41 @@ def _render_history_list(
     sessions: list,
     *,
     selected_id: str,
-    height: int,
 ) -> None:
+    """Render history list using native Streamlit components with popover menu."""
     if not sessions:
         st.sidebar.caption("No history yet.")
         return
-    items: list[str] = []
-    for session in sessions:
-        label = html.escape(session.label or "(no questions yet)")
-        session_id = html.escape(session.path.name)
-        selected_class = " selected" if session.path.name == selected_id else ""
-        items.append(
-            f'<div class="history-item{selected_class}" data-session="{session_id}" '
-            f'title="{label}">{label}</div>'
-        )
-    items_html = "\n".join(items)
-    component_html = f"""
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<style>
-  :root {{
-    color-scheme: light;
-  }}
-  body {{
-    margin: 0;
-    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-    background: transparent;
-  }}
-  #history-root {{
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 2px 4px;
-    height: 100%;
-    overflow-y: auto;
-  }}
-  .history-item {{
-    padding: 8px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 13px;
-    line-height: 1.4;
-    color: #1f1f23;
-    background: transparent;
-    border: 1px solid transparent;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }}
-  .history-item:hover {{
-    background: #f4f4f8;
-  }}
-  .history-item.selected {{
-    background: #ececf3;
-    border-color: #dedee8;
-    font-weight: 600;
-  }}
-  #context-menu {{
-    position: fixed;
-    display: none;
-    z-index: 9999;
-    min-width: 120px;
-    background: #ffffff;
-    border: 1px solid #e2e2ea;
-    border-radius: 10px;
-    box-shadow: 0 10px 24px rgba(12, 12, 18, 0.12);
-    padding: 4px;
-  }}
-  #context-menu button {{
-    width: 100%;
-    border: none;
-    background: transparent;
-    padding: 8px 10px;
-    text-align: left;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 13px;
-    color: #b42318;
-  }}
-  #context-menu button:hover {{
-    background: #fff1f1;
-  }}
-</style>
-</head>
-<body>
-  <div id="history-root">
-    {items_html}
-  </div>
-  <div id="context-menu">
-    <button id="menu-delete" type="button">Delete</button>
-  </div>
-<script>
-  const menu = document.getElementById("context-menu");
-  let menuSession = "";
 
-  function triggerAction(action, sessionId) {{
-    const url = new URL(window.parent.location.href);
-    url.searchParams.set("history_action", action);
-    url.searchParams.set("session", sessionId);
-    window.parent.location.href = url.toString();
-  }}
-
-  function openMenu(event, sessionId) {{
-    event.preventDefault();
-    menuSession = sessionId;
-    menu.style.display = "block";
-    menu.style.left = `${{event.clientX}}px`;
-    menu.style.top = `${{event.clientY}}px`;
-  }}
-
-  function closeMenu() {{
-    menu.style.display = "none";
-    menuSession = "";
-  }}
-
-  document.querySelectorAll(".history-item").forEach((item) => {{
-    const sessionId = item.dataset.session;
-    item.addEventListener("click", () => triggerAction("open", sessionId));
-    item.addEventListener("contextmenu", (event) => openMenu(event, sessionId));
-  }});
-
-  document.addEventListener("click", (event) => {{
-    if (!menu.contains(event.target)) {{
-      closeMenu();
-    }}
-  }});
-
-  document.getElementById("menu-delete").addEventListener("click", () => {{
-    if (menuSession) {{
-      triggerAction("delete", menuSession);
-    }}
-  }});
-</script>
-</body>
-</html>
-"""
     with st.sidebar:
-        components.html(component_html, height=height)
+        for session in sessions:
+            label = session.label or "(no questions yet)"
+            session_id = session.path.name
+            is_selected = session.path.name == selected_id
+
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                # Use button for selection
+                button_type = "primary" if is_selected else "secondary"
+                if st.button(
+                    label,
+                    key=f"history_open_{session_id}",
+                    use_container_width=True,
+                    type=button_type,
+                    help=label,
+                ):
+                    _select_history_session(session.path)
+                    st.rerun()
+            with col2:
+                # Context menu using popover
+                with st.popover("⋮", help="More options"):
+                    if st.button(
+                        "🗑️ Delete",
+                        key=f"history_delete_{session_id}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["pending_delete"] = session_id
+                        st.rerun()
 
 
 def main() -> None:
@@ -324,6 +219,16 @@ def main() -> None:
     config = load_config()
     ensure_session_state()
     history_dir = ensure_history_dir()
+
+    # Clean up empty sessions (no user messages) at startup
+    if "startup_cleanup_done" not in st.session_state:
+        cleanup_empty_sessions(history_dir)
+        st.session_state["startup_cleanup_done"] = True
+        # If current session was cleaned up, clear the history_path
+        current_path = st.session_state.get("history_path", "")
+        if current_path and not Path(current_path).exists():
+            st.session_state["history_path"] = ""
+            st.session_state["messages"] = []
 
     st.sidebar.header("Index")
     rebuild_index = st.sidebar.button("Rebuild index")
@@ -365,16 +270,29 @@ def main() -> None:
     )
     stats = index.stats()
 
-    if (
+    # Check if we need to rebuild the agent
+    need_rebuild = (
         st.session_state["agent"] is None
         or st.session_state["agent_data_dir"] != str(config.data_dir)
-        or st.session_state["agent_chunk_max"]
-        != int(config.chunk_max_chars)
+        or st.session_state["agent_chunk_max"] != int(config.chunk_max_chars)
         or st.session_state["agent_model_platform"] != selected_platform
         or st.session_state["agent_model_type"] != model_type_value
         or st.session_state["agent_max_tokens"] != int(config.max_tokens)
         or st.session_state["agent_stream"] != bool(enable_stream)
-    ):
+    )
+
+    # Check if this is just a model switch (don't need new conversation)
+    is_model_switch_only = (
+        st.session_state["agent"] is not None
+        and st.session_state["agent_data_dir"] == str(config.data_dir)
+        and st.session_state["agent_chunk_max"] == int(config.chunk_max_chars)
+        and (
+            st.session_state["agent_model_platform"] != selected_platform
+            or st.session_state["agent_model_type"] != model_type_value
+        )
+    )
+
+    if need_rebuild:
         config = replace(
             config,
             model_platform=selected_platform,
@@ -389,17 +307,38 @@ def main() -> None:
         st.session_state["agent_model_type"] = model_type_value
         st.session_state["agent_max_tokens"] = int(config.max_tokens)
         st.session_state["agent_stream"] = bool(enable_stream)
-        st.session_state["messages"] = []
-        history_path = start_history_session(
-            history_dir,
-            data_dir=str(config.data_dir),
-            chunk_max_chars=int(config.chunk_max_chars),
-            model_platform=selected_platform,
-            model_type=model_type_value,
-            max_tokens=int(config.max_tokens),
-            stream=bool(enable_stream),
-        )
-        st.session_state["history_path"] = str(history_path)
+
+        # Only reset conversation if this is NOT just a model switch
+        if not is_model_switch_only:
+            st.session_state["messages"] = []
+            history_path = start_history_session(
+                history_dir,
+                data_dir=str(config.data_dir),
+                chunk_max_chars=int(config.chunk_max_chars),
+                model_platform=selected_platform,
+                model_type=model_type_value,
+                max_tokens=int(config.max_tokens),
+                stream=bool(enable_stream),
+            )
+            st.session_state["history_path"] = str(history_path)
+        else:
+            # Model switch: restore agent memory from current messages
+            agent = st.session_state["agent"]
+            agent.reset()
+            try:
+                for message in st.session_state["messages"]:
+                    role = message.get("role", "assistant")
+                    content = message.get("content", "")
+                    if role == "user":
+                        msg = BaseMessage.make_user_message("User", content)
+                        agent.update_memory(msg, OpenAIBackendRole.USER)
+                    else:
+                        msg = BaseMessage.make_assistant_message(
+                            "Assistant", content
+                        )
+                        agent.update_memory(msg, OpenAIBackendRole.ASSISTANT)
+            except Exception:
+                agent.reset()
 
     st.sidebar.header("History")
     new_chat_clicked = st.sidebar.button(
@@ -425,23 +364,37 @@ def main() -> None:
         target = session_lookup.get(session_id)
         if history_action == "delete" and target:
             delete_session(target)
-            if st.session_state.get("history_path") == str(target):
-                _start_new_conversation(
-                    history_dir,
-                    data_dir=str(config.data_dir),
-                    chunk_max_chars=int(config.chunk_max_chars),
-                    model_platform=selected_platform,
-                    model_type=model_type_value,
-                    max_tokens=int(config.max_tokens),
-                    stream=bool(enable_stream),
-                )
+            # Refresh sessions list after deletion
             sessions = list_sessions(history_dir)
             session_lookup = {
                 session.path.name: session.path for session in sessions
             }
+            # If deleted the current session, switch to most recent or create new
+            if st.session_state.get("history_path") == str(target):
+                if sessions:
+                    # Select the most recent session
+                    _select_history_session(sessions[0].path)
+                else:
+                    # No sessions left, create a new one
+                    _start_new_conversation(
+                        history_dir,
+                        data_dir=str(config.data_dir),
+                        chunk_max_chars=int(config.chunk_max_chars),
+                        model_platform=selected_platform,
+                        model_type=model_type_value,
+                        max_tokens=int(config.max_tokens),
+                        stream=bool(enable_stream),
+                    )
+                    sessions = list_sessions(history_dir)
+                    session_lookup = {
+                        session.path.name: session.path for session in sessions
+                    }
+            _clear_query_params()
+            st.rerun()
         elif history_action == "open" and target:
             _select_history_session(target)
-        _clear_query_params()
+            _clear_query_params()
+            st.rerun()
 
     if not st.session_state.get("history_path"):
         if sessions:
@@ -465,16 +418,44 @@ def main() -> None:
     history_path_value = st.session_state.get("history_path", "")
     if history_path_value:
         selected_id = Path(history_path_value).name
-    row_height = 36
-    max_height = 420
-    min_height = 120
-    history_height = min(
-        max_height, max(min_height, 24 + row_height * len(sessions))
-    )
+
+    # Handle pending delete from history list
+    pending_delete = st.session_state.pop("pending_delete", None)
+    if pending_delete:
+        target = session_lookup.get(pending_delete)
+        if target:
+            delete_session(target)
+            # Refresh sessions list after deletion
+            sessions = list_sessions(history_dir)
+            session_lookup = {
+                session.path.name: session.path for session in sessions
+            }
+            # If deleted the current session, switch to most recent or create new
+            if st.session_state.get("history_path") == str(target):
+                if sessions:
+                    _select_history_session(sessions[0].path)
+                else:
+                    _start_new_conversation(
+                        history_dir,
+                        data_dir=str(config.data_dir),
+                        chunk_max_chars=int(config.chunk_max_chars),
+                        model_platform=selected_platform,
+                        model_type=model_type_value,
+                        max_tokens=int(config.max_tokens),
+                        stream=bool(enable_stream),
+                    )
+                    sessions = list_sessions(history_dir)
+                    session_lookup = {
+                        session.path.name: session.path for session in sessions
+                    }
+            # Update selected_id after deletion
+            history_path_value = st.session_state.get("history_path", "")
+            selected_id = Path(history_path_value).name if history_path_value else ""
+            st.rerun()
+
     _render_history_list(
         sessions,
         selected_id=selected_id,
-        height=history_height,
     )
 
     st.sidebar.caption(

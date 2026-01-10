@@ -161,9 +161,31 @@ pyproject.toml
 src/local_file_agent/
   agent.py
   config.py
+  history.py
   indexer.py
+  llm.py
   tools.py
+cache/
+  history/     # 对话历史存储目录
+  indices/     # 索引缓存目录
 ```
+
+### 6.2 对话历史管理
+
+历史管理功能（`history.py`）：
+
+- **存储格式**：每个对话以 `.jsonl` 文件存储在 `cache/history/`，每行一条记录（meta 或 message）
+- **自动清理**：启动时自动删除没有 user message 的空对话
+- **选择对话**：点击左侧历史列表可切换对话，右侧主区域显示对应的消息
+- **删除对话**：点击历史项旁的 ⋮ 按钮打开菜单，选择 "🗑️ Delete" 可删除对话，删除后自动切换到最新的对话
+- **新建对话**：点击 "New conversation" 按钮创建新对话
+- **切换模型**：切换 Model type 不会新建对话，当前对话可随时切换使用不同的模型
+
+主要函数：
+- `cleanup_empty_sessions(history_dir)`: 删除所有空对话（没有 user message）
+- `list_sessions(history_dir)`: 列出所有对话，按修改时间排序
+- `load_messages(path)`: 加载对话的消息列表
+- `delete_session(path)`: 删除指定对话
 
 ---
 
@@ -218,9 +240,6 @@ GEMINI_3_PRO_WEIGHT_1=1
 ---
 
 ## 8. 需要尽快确认的问题（待用户确认）
-
-- 是否只处理 Markdown？是否需要 PDF/Docx/OCR？
-- 索引持久化策略（本地磁盘 / sqlite / 向量 DB）？
 - 需要哪些报表模板？优先级？
 - LLM/Embedding 的供应方式（本地/远程）？
 
