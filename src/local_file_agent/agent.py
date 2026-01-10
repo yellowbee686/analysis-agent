@@ -202,6 +202,9 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
     )
     tool_list: list[FunctionTool] = [
         FunctionTool(tools.retrieve_local_docs),
+        FunctionTool(tools.search_exact),
+        FunctionTool(tools.get_chunk_content),
+        FunctionTool(tools.list_chunks_in_file),
         FunctionTool(tools.corpus_stats),
         FunctionTool(tools.list_docs),
     ]
@@ -217,7 +220,12 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
         working_directory=str(file_toolkit_dir),
         backup_enabled=False,  # No need for backups in cache
     )
-    file_toolkit_tools = file_toolkit.get_tools()
+    # Only use read_file and search_files; exclude write_to_file and edit_file
+    allowed_tools = {"read_file", "search_files"}
+    file_toolkit_tools = [
+        tool for tool in file_toolkit.get_tools()
+        if tool.func.__name__ in allowed_tools
+    ]
 
     # Wrap FileToolkit tools with size limits to avoid large responses
     # polluting the context. If response is too large, saves to file and

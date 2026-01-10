@@ -399,7 +399,10 @@ class LocalDocTools:
     def retrieve_local_docs(
         self, query: str, top_k: int = 5, min_score: int = 1
     ) -> Dict[str, object]:
-        """Retrieve relevant passages from local Markdown files.
+        """Retrieve relevant passages from local Markdown files using BM25.
+
+        This uses BM25 semantic ranking to find the most relevant chunks.
+        For exact string matching, use search_exact instead.
 
         Args:
             query (str): User question or keywords to search.
@@ -416,6 +419,88 @@ class LocalDocTools:
             "query": query,
             "matches": matches,
             "total_chunks": len(self.index.chunks),
+        }
+
+    def search_exact(
+        self, pattern: str, max_results: int = 20, case_sensitive: bool = False
+    ) -> Dict[str, object]:
+        """Exact substring search in indexed documents.
+
+        Unlike retrieve_local_docs which uses BM25 semantic ranking, this
+        performs exact string matching. Use this when you need to find:
+        - Specific keywords or phrases
+        - Error codes or technical identifiers
+        - Function names, variable names, or code snippets
+        - Any content that requires precise matching
+
+        Args:
+            pattern (str): The exact string to search for.
+            max_results (int): Maximum number of results to return.
+            case_sensitive (bool): Whether to match case exactly.
+
+        Returns:
+            Dict[str, object]: Matching chunks with context around the match.
+        """
+        matches = self.index.search_exact(
+            pattern=pattern,
+            max_results=max_results,
+            case_sensitive=case_sensitive,
+        )
+        return {
+            "pattern": pattern,
+            "case_sensitive": case_sensitive,
+            "matches": matches,
+            "total_matches": len(matches),
+        }
+
+    def get_chunk_content(
+        self,
+        path: str,
+        heading: str | None = None,
+        start_line: int | None = None,
+    ) -> Dict[str, object]:
+        """Get full content of a specific document chunk.
+
+        After using retrieve_local_docs or search_exact which return snippets,
+        use this to get the complete chunk content.
+
+        Args:
+            path (str): The file path of the chunk (can be partial path).
+            heading (str | None): The heading of the chunk to retrieve.
+            start_line (int | None): The start line for precise matching.
+
+        Returns:
+            Dict[str, object]: Full chunk content or error message.
+        """
+        result = self.index.get_chunk_content(
+            path=path, heading=heading, start_line=start_line
+        )
+        if result is None:
+            return {
+                "error": "Chunk not found",
+                "path": path,
+                "heading": heading,
+                "start_line": start_line,
+            }
+        return result
+
+    def list_chunks_in_file(self, path: str) -> Dict[str, object]:
+        """List all chunks in a specific file.
+
+        Useful for browsing document structure after finding a file
+        through search. Shows headings and their locations.
+
+        Args:
+            path (str): The file path to list chunks for.
+
+        Returns:
+            Dict[str, object]: List of chunk metadata.
+        """
+        chunks = self.index.list_chunks_in_file(path)
+        return {
+            "path": path,
+            "chunks": chunks,
+            "total_chunks": len(chunks),
         }
 
     def corpus_stats(self) -> Dict[str, object]:
