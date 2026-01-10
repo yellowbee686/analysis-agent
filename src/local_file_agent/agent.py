@@ -9,6 +9,7 @@ from camel.types import ModelPlatformType, ModelType
 
 from local_file_agent.config import AppConfig
 from local_file_agent.llm import build_openai_clients, select_endpoint
+from local_file_agent.mcp import get_mcp_tools, is_mcp_connected
 from local_file_agent.tools import LocalDocTools
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,10 @@ You are a local file analysis assistant. Use the available local retrieval
 tools before answering questions that depend on documents.
 When answering, cite sources using [source: file_path#heading]. If nothing is
 found, say so clearly.
+
+You also have access to CBETA Buddhist Scripture tools (if enabled) for
+searching and retrieving Buddhist texts. Use these tools when the user asks
+about Buddhist scriptures, sutras, or related topics.
 """.strip()
 
 
@@ -156,11 +161,20 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
     sanitize_tools = (
         model_platform == ModelPlatformType.OPENAI_COMPATIBLE_MODEL
     )
-    tool_list = [
+    tool_list: list[FunctionTool] = [
         FunctionTool(tools.retrieve_local_docs),
         FunctionTool(tools.corpus_stats),
         FunctionTool(tools.list_docs),
     ]
+
+    # Add MCP tools if enabled and connected
+    if config.mcp_enabled and is_mcp_connected():
+        mcp_tools = get_mcp_tools()
+        logger.info("Adding %d MCP tools to agent", len(mcp_tools))
+        tool_list.extend(mcp_tools)
+    elif config.mcp_enabled:
+        logger.warning("MCP is enabled but not connected, no MCP tools added")
+
     if sanitize_tools:
         tool_list = [_wrap_tool(tool) for tool in tool_list]
 

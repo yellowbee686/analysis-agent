@@ -25,6 +25,9 @@ class AppConfig:
     # Comma-separated list of model name patterns that should NOT use streaming
     # e.g., "gemini,claude" will disable streaming for any model containing these strings
     non_stream_patterns: str = ""
+    # MCP configuration
+    mcp_config_path: Path | None = None
+    mcp_enabled: bool = False
 
 
 def load_config() -> AppConfig:
@@ -50,6 +53,14 @@ def load_config() -> AppConfig:
     non_stream_patterns = os.environ.get(
         "LOCAL_AGENT_NON_STREAM_PATTERNS", "gemini"
     )
+    # MCP configuration
+    mcp_config_path_str = os.environ.get("LOCAL_AGENT_MCP_CONFIG")
+    mcp_config_path = Path(mcp_config_path_str) if mcp_config_path_str else None
+    mcp_enabled = os.environ.get("LOCAL_AGENT_MCP_ENABLED", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     return AppConfig(
         data_dir=data_dir,
         index_dir=index_dir,
@@ -62,4 +73,6 @@ def load_config() -> AppConfig:
         max_tokens=max_tokens,
         stream=stream,
         non_stream_patterns=non_stream_patterns,
+        mcp_config_path=mcp_config_path,
+        mcp_enabled=mcp_enabled,
     )

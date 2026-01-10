@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import replace
@@ -25,6 +26,7 @@ from local_file_agent.agent import build_agent  # noqa: E402
 from local_file_agent.config import load_config  # noqa: E402
 from local_file_agent.indexer import LocalIndex  # noqa: E402
 from local_file_agent.llm import list_models  # noqa: E402
+from local_file_agent.mcp import connect_mcp, is_mcp_connected  # noqa: E402
 from local_file_agent.history import (  # noqa: E402
     append_message as append_history_message,
     cleanup_empty_sessions,
@@ -93,6 +95,40 @@ def ensure_session_state() -> None:
         st.session_state["index"] = None
     if "index_key" not in st.session_state:
         st.session_state["index_key"] = None
+    if "mcp_connected" not in st.session_state:
+        st.session_state["mcp_connected"] = False
+
+
+def init_mcp_connection(config) -> bool:
+    """Initialize MCP connection if enabled.
+
+    Returns True if MCP is connected or not enabled.
+    """
+    if not config.mcp_enabled:
+        return True
+
+    if st.session_state.get("mcp_connected"):
+        return True
+
+    if config.mcp_config_path is None:
+        logger.warning("MCP enabled but no config path provided")
+        return False
+
+    try:
+        # Run async connection in event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        toolkit = loop.run_until_complete(connect_mcp(config.mcp_config_path))
+        if toolkit is not None:
+            st.session_state["mcp_connected"] = True
+            logger.info("MCP connection established")
+            return True
+        else:
+            logger.warning("Failed to connect to MCP servers")
+            return False
+    except Exception as e:
+        logger.error("Error initializing MCP connection: %s", e)
+        return False
 
 
 def start_history_session(
@@ -229,6 +265,15 @@ def main() -> None:
     config = load_config()
     ensure_session_state()
     history_dir = ensure_history_dir()
+
+    # Initialize MCP connection if enabled
+    if config.mcp_enabled and not st.session_state.get("mcp_connected"):
+        with st.spinner("Connecting to MCP servers..."):
+            mcp_ok = init_mcp_connection(config)
+            if mcp_ok and is_mcp_connected():
+                st.toast("MCP servers connected!", icon="✅")
+            elif config.mcp_enabled:
+                st.toast("MCP connection failed, tools unavailable", icon="⚠️")
 
     # Clean up empty sessions (no user messages) at startup
     if "startup_cleanup_done" not in st.session_state:
@@ -467,6 +512,11 @@ def main() -> None:
         sessions,
         selected_id=selected_id,
     )
+
+    # Display MCP status
+    if config.mcp_enabled:
+        mcp_status = "✅ Connected" if is_mcp_connected() else "❌ Disconnected"
+        st.sidebar.caption(f"MCP: {mcp_status}")
 
     st.sidebar.caption(
         f"Files: {stats['file_count']} | "

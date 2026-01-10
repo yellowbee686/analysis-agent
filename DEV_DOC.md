@@ -164,10 +164,18 @@ src/local_file_agent/
   history.py
   indexer.py
   llm.py
+  mcp.py        # MCP toolkit management
   tools.py
 cache/
-  history/     # 对话历史存储目录
-  indices/     # 索引缓存目录
+  history/      # 对话历史存储目录
+  indices/      # 索引缓存目录
+config/
+  mcp_config.json  # MCP 配置文件
+scripts/
+  start_mcp_server.sh   # MCP server 启动脚本
+  stop_mcp_server.sh    # MCP server 停止脚本
+mcp_servers/
+  CbetaMCP/     # CBETA MCP server (git submodule)
 ```
 
 ### 6.2 对话历史管理
@@ -241,6 +249,56 @@ GEMINI_3_PRO_WEIGHT_1=1
 可用 `LOCAL_AGENT_AZURE_API_VERSION` 覆盖默认 Azure API 版本（默认 `2024-12-01-preview`）。
 
 **注意**：代码使用 `AzureOpenAI` 客户端的 `base_url` 参数（而非 `azure_endpoint`），因为配置的 URL 已是完整路径。
+
+### 8.2 MCP (Model Context Protocol) 配置
+
+项目支持通过 MCP 协议接入外部工具服务。当前已集成 **CbetaMCP**（CBETA 佛典搜索工具）作为 submodule。
+
+**环境变量配置**：
+```
+LOCAL_AGENT_MCP_ENABLED=true
+LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json
+```
+
+**启动 MCP Server**：
+```bash
+# 前台启动（用于调试）
+./scripts/start_mcp_server.sh
+
+# 后台启动
+./scripts/start_mcp_server.sh --bg
+
+# 停止后台服务
+./scripts/stop_mcp_server.sh
+```
+
+默认端口为 `8001`，可通过 `MCP_PORT` 环境变量覆盖。
+
+**MCP 配置文件** (`config/mcp_config.json`)：
+```json
+{
+  "mcpServers": {
+    "cbeta": {
+      "url": "http://localhost:8001/mcp/sse",
+      "transport": "sse",
+      "description": "CBETA Buddhist Scripture Search MCP Server"
+    }
+  }
+}
+```
+
+**使用流程**：
+1. 启动 MCP Server：`./scripts/start_mcp_server.sh --bg`
+2. 设置环境变量启用 MCP：`LOCAL_AGENT_MCP_ENABLED=true LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json`
+3. 启动 App：`uv run streamlit run app.py`
+4. 在侧边栏查看 MCP 连接状态
+5. 向 Agent 询问佛典相关问题，如"搜索法华经相关的佛典"
+
+**CbetaMCP 提供的工具**：
+- `cbeta_fulltext_search`: CBETA 全文检索
+- 其他 CBETA API 工具（目录、工作等）
+
+详见 `mcp_servers/CbetaMCP/readme.md`
 
 **测试脚本**：
 ```bash

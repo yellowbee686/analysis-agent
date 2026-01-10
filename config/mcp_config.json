@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cbeta": {
+      "url": "http://localhost:8001/mcp/sse",
+      "transport": "sse",
+      "description": "CBETA Buddhist Scripture Search MCP Server"
+    }
+  }
+}
