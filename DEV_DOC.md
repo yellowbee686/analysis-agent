@@ -331,6 +331,14 @@ LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json
   }
   ```
 
+**MCP Optional 类型参数问题修复** (2026-01-10)：
+- **问题**：CAMEL 的 `MCPClient.generate_function_from_mcp_tool` 方法无法处理 JSON Schema 中类型为数组的参数（如 `["string", "null"]`）。当 MCP 工具使用 Optional 类型（如 `str | None`）时，fastmcp 会生成 `type: ["string", "null"]` 这样的 schema，导致 `type_map.get()` 调用报错 "unhashable type: 'list'"。
+- **症状**：日志显示 "Failed to convert tool xxx: unhashable type: 'list'"，MCP 工具无法被正确加载。
+- **修复**：在 `camel/camel/utils/mcp_client.py` 的 `generate_function_from_mcp_tool` 方法中添加类型数组处理：
+  - 检测 `param_type` 是否为 list
+  - 如果是，过滤掉 "null" 类型，使用第一个非 null 类型作为 Python 类型
+  - 这样 `str | None` 会被正确解析为 `str` 类型
+
 **测试脚本**：
 ```bash
 # 测试 GPT

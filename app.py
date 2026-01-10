@@ -62,25 +62,45 @@ def _merge_stream_text(current: str, incoming: str | None) -> str:
     return current + incoming
 
 
-def run_agent_step_async(agent, user_input: str):
+def run_agent_step_async(
+    agent,
+    user_input: str,
+    on_partial: callable | None = None,
+):
     """Run agent step asynchronously to support MCP tools.
     
     MCP tools with streamable-http transport require all calls to happen
     in the same event loop. The synchronous streaming mode uses ThreadPoolExecutor
     which creates separate threads with new event loops, causing MCP calls to hang.
     
-    This function runs the agent step in async mode and collects results.
+    This function runs the agent step in async mode and streams results via callback.
     Uses the MCP event loop saved in session_state for compatibility.
+    
+    Args:
+        agent: The ChatAgent instance
+        user_input: User's input message
+        on_partial: Optional callback function called for each partial response.
+                   Signature: on_partial(partial) -> None
+                   This enables real-time UI updates during streaming.
+    
+    Returns:
+        List of all partial responses collected during streaming.
     """
     async def _run():
         response = await agent.astep(user_input)
         if isinstance(response, AsyncStreamingChatAgentResponse):
-            # Collect streaming responses
+            # Stream responses with real-time callback
             results = []
             async for partial in response:
                 results.append(partial)
+                # Call the callback for real-time UI updates
+                if on_partial is not None:
+                    on_partial(partial)
             return results
         else:
+            # Non-streaming response
+            if on_partial is not None:
+                on_partial(response)
             return [response]
     
     # Use the event loop that was used for MCP connection
@@ -684,10 +704,11 @@ def main() -> None:
                 if use_async_mode:
                     # Use async mode for MCP tools compatibility
                     logger.info("Using async mode for MCP tools compatibility")
-                    results = run_agent_step_async(agent, user_input)
-                    logger.info("Async agent response received, %d results", len(results))
                     
-                    for partial in results:
+                    # Define callback for real-time UI updates
+                    def on_partial_update(partial):
+                        nonlocal assistant_text, reasoning, stream_mode, reasoning_stream_mode
+                        
                         if partial.msg:
                             content_delta = partial.msg.content
                             if (
@@ -730,6 +751,8 @@ def main() -> None:
                                 with reasoning_placeholder.container():
                                     st.markdown("**Think summary**")
                                     st.markdown(reasoning)
+                        
+                        # Process tool calls in real-time
                         for record in partial.info.get("tool_calls", []) or []:
                             if hasattr(record, "as_dict"):
                                 record_dict = record.as_dict()
@@ -745,7 +768,13 @@ def main() -> None:
                                 continue
                             seen_tool_calls.add(key)
                             tool_calls.append(record_dict)
-                    render_tools(tool_calls)
+                            # Render tool calls immediately when available
+                            render_tools(tool_calls)
+                    
+                    results = run_agent_step_async(
+                        agent, user_input, on_partial=on_partial_update
+                    )
+                    logger.info("Async agent response received, %d results", len(results))
                 else:
                     # Use sync mode for non-MCP scenarios
                     response = agent.step(user_input)
