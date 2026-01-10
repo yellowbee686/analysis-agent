@@ -123,6 +123,17 @@ class ModelConfig:
 
         return endpoints
 
+    def get_model_params(self, model_name: str) -> dict:
+        """Get model-specific parameters (temperature, top_p, etc.).
+
+        Returns:
+            Dictionary of model parameters. Empty dict if not configured.
+        """
+        models = self._config.get("models", {})
+        if model_name not in models:
+            return {}
+        return models[model_name].get("params", {})
+
     def list_models(self) -> list[str]:
         models = self._config.get("models", {})
         return sorted(models.keys())
@@ -249,3 +260,12 @@ def build_openai_clients(
 
 def list_models() -> list[str]:
     return _MODEL_CONFIG.list_models()
+
+
+def get_model_params(model_name: str) -> dict:
+    """Get model-specific parameters from config.
+
+    Returns:
+        Dictionary of model parameters (temperature, top_p, etc.).
+    """
+    return _MODEL_CONFIG.get_model_params(model_name)

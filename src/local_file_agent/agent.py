@@ -8,7 +8,7 @@ from camel.toolkits import FunctionTool
 from camel.types import ModelPlatformType, ModelType
 
 from local_file_agent.config import AppConfig
-from local_file_agent.llm import build_openai_clients, select_endpoint
+from local_file_agent.llm import build_openai_clients, get_model_params, select_endpoint
 from local_file_agent.mcp import get_mcp_tools, is_mcp_connected
 from local_file_agent.tools import LocalDocTools
 
@@ -125,11 +125,23 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
     use_stream = _should_use_stream(str(model_type_name), config)
     logger.info("Stream mode for '%s': %s", model_type_name, use_stream)
 
+    # Get model-specific parameters from config (temperature, top_p, etc.)
+    model_params = get_model_params(str(model_type_name))
+    if model_params:
+        logger.info(
+            "Using model-specific params for '%s': %s",
+            model_type_name,
+            model_params,
+        )
+
+    # Build model config: base params + model-specific params
     model_config_dict = {
         "max_tokens": config.max_tokens,
         "stream": use_stream,
+        **model_params,  # Model-specific params (temperature, top_p, etc.)
     }
     logger.debug("Resolved model_type_name: %s", model_type_name)
+    logger.debug("Final model_config_dict: %s", model_config_dict)
 
     endpoint = select_endpoint(str(model_type_name))
     if not endpoint:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from local_file_agent.llm import ModelConfig, select_endpoint
+from local_file_agent.llm import ModelConfig, get_model_params, select_endpoint
 
 
 def test_endpoint_from_env(monkeypatch) -> None:
@@ -30,3 +30,21 @@ def test_select_endpoint() -> None:
     assert endpoint is not None
     assert endpoint.base_url
     assert endpoint.api_key
+
+
+def test_get_model_params() -> None:
+    """Test that model-specific params are correctly loaded from config."""
+    # Model with params configured
+    params = get_model_params("deepseek-ai/deepseek-v3.2")
+    assert "temperature" in params
+    assert "top_p" in params
+    assert isinstance(params["temperature"], (int, float))
+    assert isinstance(params["top_p"], (int, float))
+
+    # Model without params configured
+    params = get_model_params("gemini-3-pro-preview-new")
+    assert params == {}
+
+    # Non-existent model
+    params = get_model_params("non-existent-model")
+    assert params == {}

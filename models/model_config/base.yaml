@@ -5,6 +5,8 @@ models:
       - base_url_env: "GEMINI_3_FLASH_BASE_URL_1"
         api_key_env: "GEMINI_3_FLASH_API_KEY_1"
         weight_env: "GEMINI_3_FLASH_WEIGHT_1"
+    params:
+      temperature: 1.0
 
   gemini-3-pro-preview-new:
     endpoints:
@@ -17,6 +19,8 @@ models:
       - base_url_env: "GEMINI_3_PRO_BASE_URL_3"
         api_key_env: "GEMINI_3_PRO_API_KEY_3"
         weight_env: "GEMINI_3_PRO_WEIGHT_3"
+    params:
+      temperature: 1.0
 
   gpt-5.2-2025-12-11:
     endpoints:
@@ -28,22 +32,50 @@ models:
         weight_env: "GPT5_2_WEIGHT_2"
 
   # NVIDIA API Models (https://integrate.api.nvidia.com/v1)
+  # Params reference: HuggingFace model cards
+  # Note: These are open-source models hosted on NVIDIA API
+
+  # DeepSeek V3.2 (HF: deepseek-ai/DeepSeek-V3.2)
+  # Ref: https://huggingface.co/deepseek-ai/DeepSeek-V3.2
+  # Thinking: model includes step-by-step reasoning in response content
   deepseek-ai/deepseek-v3.2:
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
         api_key_env: "NVIDIA_API_KEY"
+    params:
+      temperature: 1.0
+      top_p: 0.95
 
+  # MiniMax M2.1 (HF: MiniMaxAI/MiniMax-M2.1)
+  # Ref: https://huggingface.co/MiniMaxAI/MiniMax-M2.1
+  # Thinking: enabled by default, outputs <think>...</think> tags
   minimaxai/minimax-m2.1:
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
         api_key_env: "NVIDIA_API_KEY"
+    params:
+      temperature: 1.0
+      top_p: 0.95
 
+  # GLM 4.7 (HF: zai-org/GLM-4.7)
+  # Ref: https://huggingface.co/zai-org/GLM-4.7
+  # Thinking: enabled by default
   z-ai/glm4.7:
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
         api_key_env: "NVIDIA_API_KEY"
+    params:
+      temperature: 1.0
+      top_p: 0.95
 
+  # GPT-OSS 120B (HF: openai/gpt-oss-120b)
+  # Ref: https://huggingface.co/openai/gpt-oss-120b
+  # Thinking: via reasoning_effort (low/medium/high)
   openai/gpt-oss-120b:
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
         api_key_env: "NVIDIA_API_KEY"
+    params:
+      temperature: 1.0
+      top_p: 1.0
+      reasoning_effort: high
