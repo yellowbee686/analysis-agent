@@ -160,23 +160,27 @@ uv run streamlit run app.py
 app.py
 pyproject.toml
 src/local_file_agent/
-  agent.py
-  config.py
-  history.py
-  indexer.py
-  llm.py
-  mcp.py        # MCP toolkit management
-  tools.py
+  agent.py            # Agent 构建，集成各种 toolkit
+  config.py           # 配置管理
+  history.py          # 对话历史管理
+  indexer.py          # 本地文件索引
+  llm.py              # LLM 配置与端点管理
+  mcp.py              # MCP toolkit 管理 + 大响应包装
+  session_storage.py  # Session 文件存储（MCP 大响应）
+  tools.py            # 本地文档工具
 cache/
-  history/      # 对话历史存储目录
-  indices/      # 索引缓存目录
+  history/            # 对话历史存储目录
+  indices/            # 索引缓存目录
+  sessions/           # Session 文件存储目录
+    <session_id>/
+      mcp_responses/  # MCP 大响应文件
 config/
-  mcp_config.json  # MCP 配置文件
+  mcp_config.json     # MCP 配置文件
 scripts/
-  start_mcp_server.sh   # MCP server 启动脚本
-  stop_mcp_server.sh    # MCP server 停止脚本
+  start_mcp_server.sh # MCP server 启动脚本
+  stop_mcp_server.sh  # MCP server 停止脚本
 mcp_servers/
-  CbetaMCP/     # CBETA MCP server (git submodule)
+  CbetaMCP/           # CBETA MCP server (git submodule)
 ```
 
 ### 6.2 对话历史管理
@@ -346,7 +350,85 @@ DEBUG=1 uv run streamlit run app.py
 
 ---
 
-## 8. 需要尽快确认的问题（待用户确认）
+## 8. MCP 大响应处理与 FileToolkit 集成
+
+### 8.1 设计背景
+
+CBETA MCP 工具返回的佛典内容通常非常大（如经文HTML、搜索结果等），直接返回到 LLM 上下文会造成：
+- 上下文污染：大量无关内容占用有限的上下文窗口
+- 成本增加：更多 token 意味着更高的 API 成本
+- 效率下降：LLM 需要处理大量冗余信息
+
+### 8.2 解决方案：Session-based File Storage
+
+当 MCP 工具返回的内容超过阈值时，自动保存到文件并返回元数据：
+
+```
+cache/sessions/<session_id>/mcp_responses/
+├── cbeta_fulltext_search_q=法鼓_abc12345_143025.json
+├── get_juan_html_work=T0001_juan=1_def67890_143230.json
+└── ...
+```
+
+**工作流程**：
+1. MCP 工具返回响应
+2. 检查响应大小是否超过阈值（默认 8000 字符）
+3. 如超过，保存到 session 对应的文件夹
+4. 返回元数据（文件路径、大小、预览等）
+5. LLM 使用 FileToolkit 的 `search_files` 或 `read_file` 来访问内容
+
+### 8.3 配置
+
+**环境变量**：
+```bash
+# MCP 大响应阈值（字符数，默认 8000）
+LOCAL_AGENT_MCP_CONTENT_THRESHOLD=8000
+```
+
+### 8.4 相关模块
+
+- `session_storage.py`: Session 文件存储管理
+- `mcp.py`: MCP 工具包装器，拦截大响应
+- `agent.py`: 集成 FileToolkit 供 LLM 使用
+
+### 8.5 FileToolkit 工具
+
+Agent 现在包含以下文件操作工具：
+
+| 工具 | 功能 |
+|------|------|
+| `write_to_file` | 写入文件（支持多种格式） |
+| `read_file` | 读取文件内容 |
+| `edit_file` | 编辑文件（替换内容） |
+| `search_files` | 在文件中搜索文本模式 |
+
+**搜索示例**：
+```python
+# LLM 可以调用 search_files 在保存的 MCP 响应中搜索
+search_files(
+    pattern="法鼓",
+    file_types=["json", "txt"],
+    path="/path/to/session/mcp_responses"
+)
+```
+
+### 8.6 SemanticScholarToolkit
+
+Agent 集成了 Semantic Scholar 学术论文搜索工具：
+
+| 工具 | 功能 |
+|------|------|
+| `fetch_paper_data_title` | 按论文标题搜索 |
+| `fetch_paper_data_id` | 按论文 ID 获取详情 |
+| `fetch_bulk_paper_data` | 批量搜索论文（支持复杂查询） |
+| `fetch_recommended_papers` | 获取推荐论文 |
+| `fetch_author_data` | 获取作者信息 |
+
+**注意**：与 `GoogleScholarToolkit` 不同，`SemanticScholarToolkit` 不需要在初始化时指定作者，更适合通用搜索场景。
+
+---
+
+## 9. 需要尽快确认的问题（待用户确认）
 - 需要哪些报表模板？优先级？
 - LLM/Embedding 的供应方式（本地/远程）？
 

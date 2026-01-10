@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from camel.agents import ChatAgent
 from camel.models import ModelFactory
 from camel.toolkits import FunctionTool
+from camel.toolkits.file_toolkit import FileToolkit
+from camel.toolkits.semantic_scholar_toolkit import SemanticScholarToolkit
 from camel.types import ModelPlatformType, ModelType
 
 from local_file_agent.config import AppConfig
 from local_file_agent.llm import build_openai_clients, get_model_params, select_endpoint
-from local_file_agent.mcp import get_mcp_tools, is_mcp_connected
+from local_file_agent.mcp import get_mcp_tools, get_session_storage_path, is_mcp_connected
 from local_file_agent.tools import LocalDocTools
 
 logger = logging.getLogger(__name__)
@@ -25,6 +28,20 @@ You also have access to CBETA Buddhist Scripture tools (if enabled) for
 searching and retrieving Buddhist texts. Use these tools when the user asks
 about Buddhist scriptures, sutras, or related topics. When calling CBETA MCP
 tools, provide parameters in Traditional Chinese.
+
+You also have access to Semantic Scholar tools for academic paper search:
+- fetch_paper_data_title: Search for a paper by title
+- fetch_bulk_paper_data: Search multiple papers by topic/query
+- fetch_author_data: Get author information by author IDs
+Use these tools when the user asks about academic papers, research, or citations.
+
+**Important: Handling Large Responses**
+Some MCP tools may return large responses that are saved to files instead of
+being returned directly. When you see a response with "status": "saved_to_file":
+1. Note the file_path in the response
+2. Use the search_files tool to search for specific content within the file
+3. Use the read_file tool if you need to read the full content
+This approach helps manage context and allows for efficient content search.
 """.strip()
 
 
@@ -179,6 +196,31 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
         FunctionTool(tools.corpus_stats),
         FunctionTool(tools.list_docs),
     ]
+
+    # Add FileToolkit for file operations
+    # Use session storage path if available, otherwise use cache directory
+    file_toolkit_dir = get_session_storage_path()
+    if file_toolkit_dir is None:
+        file_toolkit_dir = Path("cache/sessions/_default/mcp_responses")
+        file_toolkit_dir.mkdir(parents=True, exist_ok=True)
+
+    file_toolkit = FileToolkit(
+        working_directory=str(file_toolkit_dir),
+        backup_enabled=False,  # No need for backups in cache
+    )
+    file_toolkit_tools = file_toolkit.get_tools()
+    logger.info("Adding %d FileToolkit tools to agent", len(file_toolkit_tools))
+    tool_list.extend(file_toolkit_tools)
+
+    # Add SemanticScholarToolkit for academic paper search
+    # This is more general than GoogleScholarToolkit which requires a specific author
+    semantic_scholar_toolkit = SemanticScholarToolkit()
+    semantic_scholar_tools = semantic_scholar_toolkit.get_tools()
+    logger.info(
+        "Adding %d SemanticScholarToolkit tools to agent",
+        len(semantic_scholar_tools)
+    )
+    tool_list.extend(semantic_scholar_tools)
 
     # Add MCP tools if enabled and connected
     if config.mcp_enabled and is_mcp_connected():

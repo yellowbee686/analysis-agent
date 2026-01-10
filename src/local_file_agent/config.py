@@ -28,6 +28,9 @@ class AppConfig:
     # MCP configuration
     mcp_config_path: Path | None = None
     mcp_enabled: bool = False
+    # MCP large response threshold (characters)
+    # When MCP tool response exceeds this, save to file and return metadata
+    mcp_content_threshold: int = 8000
 
 
 def load_config() -> AppConfig:
@@ -61,6 +64,10 @@ def load_config() -> AppConfig:
         "true",
         "yes",
     }
+    # MCP large response threshold (default 8000 characters)
+    mcp_content_threshold = int(
+        os.environ.get("LOCAL_AGENT_MCP_CONTENT_THRESHOLD", "8000")
+    )
     return AppConfig(
         data_dir=data_dir,
         index_dir=index_dir,
@@ -75,4 +82,5 @@ def load_config() -> AppConfig:
         non_stream_patterns=non_stream_patterns,
         mcp_config_path=mcp_config_path,
         mcp_enabled=mcp_enabled,
+        mcp_content_threshold=mcp_content_threshold,
     )

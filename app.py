@@ -26,7 +26,13 @@ from local_file_agent.agent import build_agent  # noqa: E402
 from local_file_agent.config import load_config  # noqa: E402
 from local_file_agent.indexer import LocalIndex  # noqa: E402
 from local_file_agent.llm import list_models  # noqa: E402
-from local_file_agent.mcp import connect_mcp, is_mcp_connected  # noqa: E402
+from local_file_agent.mcp import (  # noqa: E402
+    connect_mcp,
+    get_session_id,
+    is_mcp_connected,
+    set_content_threshold,
+    set_session_id,
+)
 from local_file_agent.history import (  # noqa: E402
     append_message as append_history_message,
     cleanup_empty_sessions,
@@ -166,6 +172,13 @@ def init_mcp_connection(config) -> bool:
         return False
 
     try:
+        # Set content threshold for large response handling
+        set_content_threshold(config.mcp_content_threshold)
+        logger.info(
+            "MCP content threshold set to %d chars",
+            config.mcp_content_threshold
+        )
+
         # Run async connection in event loop
         # We create and save the event loop so it can be reused for MCP tool calls
         loop = asyncio.new_event_loop()
@@ -204,6 +217,13 @@ def start_history_session(
         "stream": stream,
     }
     init_session(path, meta)
+
+    # Set session ID for MCP storage
+    # Use the session filename (without extension) as the session ID
+    session_id = path.stem
+    set_session_id(session_id)
+    logger.debug("Set MCP session ID: %s", session_id)
+
     return path
 
 
@@ -253,6 +273,12 @@ def _start_new_conversation(
 def _select_history_session(path: Path) -> None:
     st.session_state["history_path"] = str(path)
     st.session_state["messages"] = load_messages(path)
+
+    # Set session ID for MCP storage
+    session_id = path.stem
+    set_session_id(session_id)
+    logger.debug("Set MCP session ID for selected session: %s", session_id)
+
     agent = st.session_state.get("agent")
     if agent is not None:
         agent.reset()
@@ -526,6 +552,12 @@ def main() -> None:
     history_path_value = st.session_state.get("history_path", "")
     if history_path_value:
         selected_id = Path(history_path_value).name
+        # Ensure MCP session ID is synced with history session
+        # This handles cases where session_state is restored but module globals are reset
+        current_session_id = Path(history_path_value).stem
+        if get_session_id() != current_session_id:
+            set_session_id(current_session_id)
+            logger.debug("Synced MCP session ID: %s", current_session_id)
 
     # Handle pending delete from history list
     pending_delete = st.session_state.pop("pending_delete", None)
