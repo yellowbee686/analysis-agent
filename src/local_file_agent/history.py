@@ -92,7 +92,6 @@ def load_messages(path: Path) -> list[dict]:
 
 
 def _session_label(path: Path) -> str:
-    meta: dict | None = None
     first_user: str | None = None
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         line = line.strip()
@@ -102,23 +101,10 @@ def _session_label(path: Path) -> str:
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if record.get("type") == "meta" and meta is None:
-            meta = record
-            continue
         if record.get("type") == "message" and record.get("role") == "user":
             first_user = record.get("content", "").strip()
             break
-    created = ""
-    if meta:
-        created = meta.get("created_at", "")
-    if not created:
-        created = datetime.fromtimestamp(path.stat().st_mtime).isoformat(
-            timespec="seconds"
-        )
-    preview = first_user or "(no questions yet)"
-    if len(preview) > 40:
-        preview = preview[:40] + "..."
-    return f"{created} | {preview}"
+    return first_user or "(no questions yet)"
 
 
 def list_sessions(history_dir: Path) -> list[HistorySession]:
@@ -137,3 +123,10 @@ def list_sessions(history_dir: Path) -> list[HistorySession]:
         )
         sessions.append(HistorySession(path=path, label=label, updated_at=updated_at))
     return sessions
+
+
+def delete_session(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.is_file():
+        path.unlink()

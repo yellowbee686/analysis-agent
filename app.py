@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import html
 from pathlib import Path
 import sys
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 ROOT_DIR = Path(__file__).resolve().parent
 SRC_DIR = ROOT_DIR / "src"
@@ -17,6 +19,7 @@ from local_file_agent.indexer import LocalIndex  # noqa: E402
 from local_file_agent.llm import list_models  # noqa: E402
 from local_file_agent.history import (  # noqa: E402
     append_message as append_history_message,
+    delete_session,
     ensure_history_dir,
     init_session,
     list_sessions,
@@ -24,8 +27,9 @@ from local_file_agent.history import (  # noqa: E402
     new_session_path,
 )
 from camel.agents.chat_agent import StreamingChatAgentResponse  # noqa: E402
+from camel.messages import BaseMessage  # noqa: E402
 from local_file_agent.tools import LocalDocTools  # noqa: E402
-from camel.types import ModelPlatformType  # noqa: E402
+from camel.types import ModelPlatformType, OpenAIBackendRole  # noqa: E402
 
 
 def build_index(
@@ -105,6 +109,216 @@ def start_history_session(
     return path
 
 
+def _get_query_param(name: str) -> str:
+    if hasattr(st, "query_params"):
+        value = st.query_params.get(name)
+    else:
+        value = st.experimental_get_query_params().get(name)
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return value or ""
+
+
+def _clear_query_params() -> None:
+    if hasattr(st, "query_params"):
+        st.query_params.clear()
+    else:
+        st.experimental_set_query_params()
+
+
+def _start_new_conversation(
+    history_dir: Path,
+    *,
+    data_dir: str,
+    chunk_max_chars: int,
+    model_platform: str,
+    model_type: str,
+    max_tokens: int,
+    stream: bool,
+) -> None:
+    st.session_state["messages"] = []
+    agent = st.session_state.get("agent")
+    if agent is not None:
+        agent.reset()
+    history_path = start_history_session(
+        history_dir,
+        data_dir=data_dir,
+        chunk_max_chars=chunk_max_chars,
+        model_platform=model_platform,
+        model_type=model_type,
+        max_tokens=max_tokens,
+        stream=stream,
+    )
+    st.session_state["history_path"] = str(history_path)
+
+
+def _select_history_session(path: Path) -> None:
+    st.session_state["history_path"] = str(path)
+    st.session_state["messages"] = load_messages(path)
+    agent = st.session_state.get("agent")
+    if agent is not None:
+        agent.reset()
+        try:
+            for message in st.session_state["messages"]:
+                role = message.get("role", "assistant")
+                content = message.get("content", "")
+                if role == "user":
+                    msg = BaseMessage.make_user_message("User", content)
+                    agent.update_memory(msg, OpenAIBackendRole.USER)
+                else:
+                    msg = BaseMessage.make_assistant_message(
+                        "Assistant", content
+                    )
+                    agent.update_memory(msg, OpenAIBackendRole.ASSISTANT)
+        except Exception:
+            agent.reset()
+
+
+def _render_history_list(
+    sessions: list,
+    *,
+    selected_id: str,
+    height: int,
+) -> None:
+    if not sessions:
+        st.sidebar.caption("No history yet.")
+        return
+    items: list[str] = []
+    for session in sessions:
+        label = html.escape(session.label or "(no questions yet)")
+        session_id = html.escape(session.path.name)
+        selected_class = " selected" if session.path.name == selected_id else ""
+        items.append(
+            f'<div class="history-item{selected_class}" data-session="{session_id}" '
+            f'title="{label}">{label}</div>'
+        )
+    items_html = "\n".join(items)
+    component_html = f"""
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {{
+    color-scheme: light;
+  }}
+  body {{
+    margin: 0;
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    background: transparent;
+  }}
+  #history-root {{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 2px 4px;
+    height: 100%;
+    overflow-y: auto;
+  }}
+  .history-item {{
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #1f1f23;
+    background: transparent;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }}
+  .history-item:hover {{
+    background: #f4f4f8;
+  }}
+  .history-item.selected {{
+    background: #ececf3;
+    border-color: #dedee8;
+    font-weight: 600;
+  }}
+  #context-menu {{
+    position: fixed;
+    display: none;
+    z-index: 9999;
+    min-width: 120px;
+    background: #ffffff;
+    border: 1px solid #e2e2ea;
+    border-radius: 10px;
+    box-shadow: 0 10px 24px rgba(12, 12, 18, 0.12);
+    padding: 4px;
+  }}
+  #context-menu button {{
+    width: 100%;
+    border: none;
+    background: transparent;
+    padding: 8px 10px;
+    text-align: left;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #b42318;
+  }}
+  #context-menu button:hover {{
+    background: #fff1f1;
+  }}
+</style>
+</head>
+<body>
+  <div id="history-root">
+    {items_html}
+  </div>
+  <div id="context-menu">
+    <button id="menu-delete" type="button">Delete</button>
+  </div>
+<script>
+  const menu = document.getElementById("context-menu");
+  let menuSession = "";
+
+  function triggerAction(action, sessionId) {{
+    const url = new URL(window.parent.location.href);
+    url.searchParams.set("history_action", action);
+    url.searchParams.set("session", sessionId);
+    window.parent.location.href = url.toString();
+  }}
+
+  function openMenu(event, sessionId) {{
+    event.preventDefault();
+    menuSession = sessionId;
+    menu.style.display = "block";
+    menu.style.left = `${{event.clientX}}px`;
+    menu.style.top = `${{event.clientY}}px`;
+  }}
+
+  function closeMenu() {{
+    menu.style.display = "none";
+    menuSession = "";
+  }}
+
+  document.querySelectorAll(".history-item").forEach((item) => {{
+    const sessionId = item.dataset.session;
+    item.addEventListener("click", () => triggerAction("open", sessionId));
+    item.addEventListener("contextmenu", (event) => openMenu(event, sessionId));
+  }});
+
+  document.addEventListener("click", (event) => {{
+    if (!menu.contains(event.target)) {{
+      closeMenu();
+    }}
+  }});
+
+  document.getElementById("menu-delete").addEventListener("click", () => {{
+    if (menuSession) {{
+      triggerAction("delete", menuSession);
+    }}
+  }});
+</script>
+</body>
+</html>
+"""
+    with st.sidebar:
+        components.html(component_html, height=height)
+
+
 def main() -> None:
     st.set_page_config(page_title="Local File Agent", layout="wide")
     config = load_config()
@@ -116,58 +330,31 @@ def main() -> None:
 
     st.sidebar.header("Model Settings")
     platform_values = [p.value for p in ModelPlatformType]
-    default_platform = (
+    selected_platform = (
         config.model_platform
         if config.model_platform in platform_values
         else ModelPlatformType.DEFAULT.value
     )
-    selected_platform = st.sidebar.selectbox(
-        "Model platform",
-        options=platform_values,
-        index=platform_values.index(default_platform),
-    )
     model_options = list_models()
-    model_options_with_custom = ["(custom)"] + model_options
-    selected_model = st.sidebar.selectbox(
-        "Model type",
-        options=model_options_with_custom,
-        index=(
-            model_options_with_custom.index(config.model_type)
-            if config.model_type in model_options_with_custom
-            else 0
-        ),
-    )
-    custom_model_type = ""
-    if selected_model == "(custom)":
-        custom_model_type = st.sidebar.text_input(
-            "Custom model type",
-            value=config.model_type or "",
-        ).strip()
-
-    model_type_value = (
-        custom_model_type if selected_model == "(custom)" else selected_model
-    )
-    if not model_type_value:
+    if not model_options:
+        st.sidebar.caption("No models configured.")
         model_type_value = config.model_type or ""
+    else:
+        default_model = st.session_state.get("selected_model_type")
+        if default_model not in model_options:
+            default_model = (
+                config.model_type
+                if config.model_type in model_options
+                else model_options[0]
+            )
+        st.session_state["selected_model_type"] = default_model
+        model_type_value = st.sidebar.selectbox(
+            "Model type",
+            options=model_options,
+            key="selected_model_type",
+        )
 
-    enable_stream = st.sidebar.toggle(
-        "Stream output", value=bool(config.stream)
-    )
-
-    st.sidebar.header("History")
-    sessions = list_sessions(history_dir)
-    history_options = ["(new session)"] + [session.label for session in sessions]
-    selected_history = st.sidebar.selectbox(
-        "Saved sessions", options=history_options
-    )
-    if st.sidebar.button("Load history"):
-        if selected_history != "(new session)" and sessions:
-            session_index = history_options.index(selected_history) - 1
-            session_path = sessions[session_index].path
-            st.session_state["messages"] = load_messages(session_path)
-            st.session_state["history_path"] = str(session_path)
-            if st.session_state["agent"] is not None:
-                st.session_state["agent"].reset()
+    enable_stream = True
 
     index = build_index(
         data_dir=config.data_dir,
@@ -177,11 +364,6 @@ def main() -> None:
         force_rebuild=rebuild_index,
     )
     stats = index.stats()
-    st.sidebar.caption(
-        f"Files: {stats['file_count']} | "
-        f"Chunks: {stats['chunk_count']} | "
-        f"Chars: {stats['total_chars']}"
-    )
 
     if (
         st.session_state["agent"] is None
@@ -219,8 +401,13 @@ def main() -> None:
         )
         st.session_state["history_path"] = str(history_path)
 
-    if not st.session_state["history_path"]:
-        history_path = start_history_session(
+    st.sidebar.header("History")
+    new_chat_clicked = st.sidebar.button(
+        "New conversation",
+        use_container_width=True,
+    )
+    if new_chat_clicked:
+        _start_new_conversation(
             history_dir,
             data_dir=str(config.data_dir),
             chunk_max_chars=int(config.chunk_max_chars),
@@ -229,7 +416,72 @@ def main() -> None:
             max_tokens=int(config.max_tokens),
             stream=bool(enable_stream),
         )
-        st.session_state["history_path"] = str(history_path)
+
+    sessions = list_sessions(history_dir)
+    session_lookup = {session.path.name: session.path for session in sessions}
+    history_action = _get_query_param("history_action")
+    session_id = _get_query_param("session")
+    if history_action and session_id:
+        target = session_lookup.get(session_id)
+        if history_action == "delete" and target:
+            delete_session(target)
+            if st.session_state.get("history_path") == str(target):
+                _start_new_conversation(
+                    history_dir,
+                    data_dir=str(config.data_dir),
+                    chunk_max_chars=int(config.chunk_max_chars),
+                    model_platform=selected_platform,
+                    model_type=model_type_value,
+                    max_tokens=int(config.max_tokens),
+                    stream=bool(enable_stream),
+                )
+            sessions = list_sessions(history_dir)
+            session_lookup = {
+                session.path.name: session.path for session in sessions
+            }
+        elif history_action == "open" and target:
+            _select_history_session(target)
+        _clear_query_params()
+
+    if not st.session_state.get("history_path"):
+        if sessions:
+            _select_history_session(sessions[0].path)
+        else:
+            _start_new_conversation(
+                history_dir,
+                data_dir=str(config.data_dir),
+                chunk_max_chars=int(config.chunk_max_chars),
+                model_platform=selected_platform,
+                model_type=model_type_value,
+                max_tokens=int(config.max_tokens),
+                stream=bool(enable_stream),
+            )
+            sessions = list_sessions(history_dir)
+            session_lookup = {
+                session.path.name: session.path for session in sessions
+            }
+
+    selected_id = ""
+    history_path_value = st.session_state.get("history_path", "")
+    if history_path_value:
+        selected_id = Path(history_path_value).name
+    row_height = 36
+    max_height = 420
+    min_height = 120
+    history_height = min(
+        max_height, max(min_height, 24 + row_height * len(sessions))
+    )
+    _render_history_list(
+        sessions,
+        selected_id=selected_id,
+        height=history_height,
+    )
+
+    st.sidebar.caption(
+        f"Files: {stats['file_count']} | "
+        f"Chunks: {stats['chunk_count']} | "
+        f"Chars: {stats['total_chars']}"
+    )
 
     history_path_value = st.session_state.get("history_path", "")
     if history_path_value and st.session_state["messages"]:
@@ -245,21 +497,6 @@ def main() -> None:
                 )
 
     st.title("Local File Analysis Agent")
-
-    if st.sidebar.button("Reset conversation"):
-        st.session_state["messages"] = []
-        if st.session_state["agent"] is not None:
-            st.session_state["agent"].reset()
-        history_path = start_history_session(
-            history_dir,
-            data_dir=str(config.data_dir),
-            chunk_max_chars=int(config.chunk_max_chars),
-            model_platform=selected_platform,
-            model_type=model_type_value,
-            max_tokens=int(config.max_tokens),
-            stream=bool(enable_stream),
-        )
-        st.session_state["history_path"] = str(history_path)
 
     for message in st.session_state["messages"]:
         with st.chat_message(message["role"]):
