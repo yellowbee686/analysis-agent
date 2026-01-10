@@ -215,7 +215,10 @@ OPENAI_API_KEY=your_key_here
 - 未设置时回退到 CAMEL 默认值（由 `DEFAULT_MODEL_PLATFORM_TYPE` 与 `DEFAULT_MODEL_TYPE` 控制）。
 - 可使用 `LOCAL_AGENT_SYSTEM_PROMPT` 覆盖系统提示词（可选）。
 - `LOCAL_AGENT_MAX_TOKENS` 默认 65535，用于避免 CAMEL 关于 `max_tokens` 的警告。
- - `LOCAL_AGENT_STREAM` 控制流式输出（默认 true）。
+- `LOCAL_AGENT_STREAM` 控制流式输出（默认 true）。
+- `LOCAL_AGENT_NON_STREAM_PATTERNS` 指定不使用流式输出的模型名称模式，逗号分隔（默认 `gemini`）。
+  - 例如：`gemini,claude` 会禁用所有包含 "gemini" 或 "claude" 的模型的流式输出。
+  - 设为空字符串 `""` 可让所有模型使用流式输出。
 
 ### 8.1 多 Key 随机采样（参考 ttlive_strategy_agent）
 当前项目支持从 `models/model_config/base.yaml` 读取模型端点列表，并按 `weight` 随机采样 API Key 与 Base URL。
@@ -232,7 +235,26 @@ GEMINI_3_PRO_API_KEY_1=...
 GEMINI_3_PRO_WEIGHT_1=1
 ```
 
-可用 `LOCAL_AGENT_AZURE_API_VERSION` 覆盖默认 Azure API 版本（默认 `2024-03-01-preview`）。
+**禁用无效 Key**：将 `weight` 设为 `0` 可禁用该 endpoint，如：`GPT5_2_WEIGHT_1=0`
+
+可用 `LOCAL_AGENT_REQUEST_TIMEOUT` 覆盖请求超时时间（默认 120 秒）。
+可用 `LOCAL_AGENT_AZURE_API_VERSION` 覆盖默认 Azure API 版本（默认 `2024-12-01-preview`）。
+
+**注意**：代码使用 `AzureOpenAI` 客户端的 `base_url` 参数（而非 `azure_endpoint`），因为配置的 URL 已是完整路径。
+
+**测试脚本**：
+```bash
+# 测试 GPT
+uv run python scripts/smoke_openai_compatible.py -v --model gpt-5.2-2025-12-11
+
+# 测试 Gemini
+uv run python scripts/smoke_openai_compatible.py -v --model gemini-3-pro-preview-new
+```
+
+**调试模式**：设置 `DEBUG=1` 启用详细日志：
+```bash
+DEBUG=1 uv run streamlit run app.py
+```
 
 实测：部分网关会对 `gpt-i18n.byteintl.net` / `search-va.byteintl.net` 进行 301 跳转，导致 POST 变为 GET 引发 404。
 建议在 `.env` 中直接填写最终网关域名（例如你们内部最终网关）以避免重定向。

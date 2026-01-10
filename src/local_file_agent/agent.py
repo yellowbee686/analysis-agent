@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from camel.agents import ChatAgent
 from camel.models import ModelFactory
 from camel.toolkits import FunctionTool
@@ -8,6 +10,8 @@ from camel.types import ModelPlatformType, ModelType
 from local_file_agent.config import AppConfig
 from local_file_agent.llm import build_openai_clients, select_endpoint
 from local_file_agent.tools import LocalDocTools
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_MESSAGE = """
@@ -73,22 +77,71 @@ def _wrap_tool(tool: FunctionTool) -> FunctionTool:
     return tool
 
 
+def _should_use_stream(model_name: str, config: AppConfig) -> bool:
+    """Determine if streaming should be enabled for the given model.
+
+    Returns False if model name matches any pattern in non_stream_patterns.
+    """
+    if not config.stream:
+        return False
+
+    patterns = [
+        p.strip().lower()
+        for p in config.non_stream_patterns.split(",")
+        if p.strip()
+    ]
+    model_lower = model_name.lower()
+    for pattern in patterns:
+        if pattern in model_lower:
+            logger.info(
+                "Streaming disabled for model '%s' (matches pattern '%s')",
+                model_name,
+                pattern,
+            )
+            return False
+    return True
+
+
 def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
+    logger.info(
+        "Building agent with model_platform=%s, model_type=%s",
+        config.model_platform,
+        config.model_type,
+    )
     model_platform = _resolve_model_platform(config.model_platform)
     model_type = _resolve_model_type(config.model_type)
     system_message = config.system_prompt or SYSTEM_MESSAGE
-    model_config_dict = {
-        "max_tokens": config.max_tokens,
-        "stream": config.stream,
-    }
     model_type_name = (
         model_type.value if isinstance(model_type, ModelType) else model_type
     )
+
+    # Determine streaming mode based on model name
+    use_stream = _should_use_stream(str(model_type_name), config)
+    logger.info("Stream mode for '%s': %s", model_type_name, use_stream)
+
+    model_config_dict = {
+        "max_tokens": config.max_tokens,
+        "stream": use_stream,
+    }
+    logger.debug("Resolved model_type_name: %s", model_type_name)
+
     endpoint = select_endpoint(str(model_type_name))
+    if not endpoint:
+        logger.error("No endpoint found for model: %s", model_type_name)
+    else:
+        logger.info(
+            "Using endpoint: base_url=%s, api_key=%s...%s",
+            endpoint.base_url,
+            endpoint.api_key[:5] if endpoint.api_key else "None",
+            endpoint.api_key[-3:] if endpoint.api_key and len(endpoint.api_key) > 8 else "",
+        )
+
     client = None
     async_client = None
     if endpoint:
         client, async_client = build_openai_clients(endpoint)
+
+    logger.debug("Creating model via ModelFactory...")
     model = ModelFactory.create(
         model_platform=model_platform,
         model_type=model_type,
@@ -98,6 +151,8 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
         async_client=async_client,
         model_config_dict=model_config_dict,
     )
+    logger.debug("Model created: %s", type(model).__name__)
+
     sanitize_tools = (
         model_platform == ModelPlatformType.OPENAI_COMPATIBLE_MODEL
     )
@@ -108,10 +163,12 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
     ]
     if sanitize_tools:
         tool_list = [_wrap_tool(tool) for tool in tool_list]
+
     agent = ChatAgent(
         system_message=system_message,
         model=model,
         tools=tool_list,
     )
     agent.reset()
+    logger.info("Agent built successfully")
     return agent

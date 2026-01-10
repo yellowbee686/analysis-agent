@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import replace
 from pathlib import Path
 import sys
 
 import streamlit as st
+
+# Configure logging for debugging
+logging.basicConfig(
+    level=logging.DEBUG if os.environ.get("DEBUG") else logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stderr)],
+)
+logger = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).resolve().parent
 SRC_DIR = ROOT_DIR / "src"
@@ -524,7 +534,9 @@ def main() -> None:
                             st.json(call.get("result", {}))
 
             try:
+                logger.info("Sending user input to agent: %s...", user_input[:50])
                 response = agent.step(user_input)
+                logger.info("Agent response received, type: %s", type(response).__name__)
                 assistant_text = ""
                 reasoning = ""
                 tool_calls = []

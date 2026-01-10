@@ -22,6 +22,9 @@ class AppConfig:
     system_prompt: str | None = None
     max_tokens: int = 65535
     stream: bool = True
+    # Comma-separated list of model name patterns that should NOT use streaming
+    # e.g., "gemini,claude" will disable streaming for any model containing these strings
+    non_stream_patterns: str = ""
 
 
 def load_config() -> AppConfig:
@@ -43,6 +46,10 @@ def load_config() -> AppConfig:
         "true",
         "yes",
     }
+    # Default: gemini models use non-streaming due to compatibility issues
+    non_stream_patterns = os.environ.get(
+        "LOCAL_AGENT_NON_STREAM_PATTERNS", "gemini"
+    )
     return AppConfig(
         data_dir=data_dir,
         index_dir=index_dir,
@@ -54,4 +61,5 @@ def load_config() -> AppConfig:
         system_prompt=system_prompt,
         max_tokens=max_tokens,
         stream=stream,
+        non_stream_patterns=non_stream_patterns,
     )

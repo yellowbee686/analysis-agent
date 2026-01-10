@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import random
 from dataclasses import dataclass
@@ -8,10 +9,12 @@ from typing import Optional
 
 import yaml
 from dotenv import load_dotenv
-from openai import AsyncAzureOpenAI, AzureOpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI, AzureOpenAI, OpenAI
 
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -34,11 +37,29 @@ class ModelConfig:
             return yaml.safe_load(f) or {}
 
     def get_endpoints(self, model_name: str) -> list[Endpoint]:
+        """Get all valid endpoints for a model.
+
+        Returns:
+            List of Endpoint objects with resolved environment variables.
+        """
         models = self._config.get("models", {})
         if model_name not in models:
+            logger.debug(
+                "Model '%s' not found in config. Available models: %s",
+                model_name,
+                list(models.keys()),
+            )
             return []
+
         endpoints = []
-        for endpoint in models[model_name].get("endpoints", []):
+        endpoint_configs = models[model_name].get("endpoints", [])
+        logger.debug(
+            "Processing %d endpoint config(s) for model '%s'",
+            len(endpoint_configs),
+            model_name,
+        )
+
+        for i, endpoint in enumerate(endpoint_configs):
             base_url = endpoint.get("base_url")
             base_url_env = endpoint.get("base_url_env")
             if base_url_env:
@@ -65,7 +86,25 @@ class ModelConfig:
                 api_version = os.environ.get(api_version_env, api_version)
 
             if not base_url or not api_key:
+                logger.debug(
+                    "Skipping endpoint[%d] for model '%s': base_url=%s, api_key=%s",
+                    i,
+                    model_name,
+                    "set" if base_url else "missing",
+                    "set" if api_key else "missing",
+                )
                 continue
+
+            # Skip endpoints with weight=0 (disabled)
+            if weight <= 0:
+                logger.debug(
+                    "Skipping endpoint[%d] for model '%s': weight=%d (disabled)",
+                    i,
+                    model_name,
+                    weight,
+                )
+                continue
+
             endpoints.append(
                 Endpoint(
                     base_url=base_url,
@@ -74,6 +113,14 @@ class ModelConfig:
                     api_version=api_version,
                 )
             )
+            logger.debug(
+                "Added endpoint[%d] for model '%s': base_url=%s, weight=%d",
+                i,
+                model_name,
+                base_url,
+                weight,
+            )
+
         return endpoints
 
     def list_models(self) -> list[str]:
@@ -91,30 +138,93 @@ _MODEL_CONFIG = ModelConfig(_DEFAULT_CONFIG_PATH)
 
 
 def select_endpoint(model_name: str) -> Optional[Endpoint]:
+    """Select an endpoint for the given model using weighted random selection."""
+    logger.debug("Selecting endpoint for model: %s", model_name)
     endpoints = _MODEL_CONFIG.get_endpoints(model_name)
+
     if not endpoints:
+        logger.warning(
+            "No valid endpoints found for model '%s'. "
+            "Check that the required environment variables are set.",
+            model_name,
+        )
         return None
+
+    logger.debug("Found %d endpoint(s) for model '%s'", len(endpoints), model_name)
+
     if len(endpoints) == 1:
-        return endpoints[0]
-    weights = [endpoint.weight for endpoint in endpoints]
-    idx = random.choices(range(len(endpoints)), weights=weights, k=1)[0]
-    return endpoints[idx]
+        selected = endpoints[0]
+    else:
+        weights = [endpoint.weight for endpoint in endpoints]
+        idx = random.choices(range(len(endpoints)), weights=weights, k=1)[0]
+        selected = endpoints[idx]
+
+    logger.info(
+        "Selected endpoint for model '%s': base_url=%s",
+        model_name,
+        selected.base_url,
+    )
+    return selected
 
 
-def build_openai_clients(endpoint: Endpoint) -> tuple[AzureOpenAI, AsyncAzureOpenAI]:
-    api_version = endpoint.api_version or os.environ.get(
-        "LOCAL_AGENT_AZURE_API_VERSION", "2024-03-01-preview"
+def build_openai_clients(
+    endpoint: Endpoint,
+    use_azure: bool = True,
+) -> tuple[AzureOpenAI | OpenAI, AsyncAzureOpenAI | AsyncOpenAI]:
+    """Build OpenAI clients for the given endpoint.
+
+    Args:
+        endpoint: The endpoint configuration.
+        use_azure: If True, use AzureOpenAI client; otherwise use standard OpenAI client.
+
+    Returns:
+        Tuple of (sync_client, async_client).
+    """
+    logger.debug(
+        "Building %s clients for endpoint: base_url=%s, api_key=%s...%s",
+        "AzureOpenAI" if use_azure else "OpenAI",
+        endpoint.base_url,
+        endpoint.api_key[:5] if endpoint.api_key else "None",
+        endpoint.api_key[-3:] if endpoint.api_key and len(endpoint.api_key) > 8 else "",
     )
-    client = AzureOpenAI(
-        base_url=endpoint.base_url,
-        api_key=endpoint.api_key,
-        api_version=api_version,
-    )
-    async_client = AsyncAzureOpenAI(
-        base_url=endpoint.base_url,
-        api_key=endpoint.api_key,
-        api_version=api_version,
-    )
+
+    # Set a reasonable timeout to avoid hanging requests
+    timeout = float(os.environ.get("LOCAL_AGENT_REQUEST_TIMEOUT", "120"))
+
+    if use_azure:
+        api_version = endpoint.api_version or os.environ.get(
+            "LOCAL_AGENT_AZURE_API_VERSION", "2024-12-01-preview"
+        )
+        logger.debug("Using Azure API version: %s", api_version)
+
+        # Use base_url instead of azure_endpoint because the configured URL
+        # is already a full path (not just the Azure resource endpoint).
+        # azure_endpoint would append /openai/... which breaks the URL.
+        client = AzureOpenAI(
+            base_url=endpoint.base_url,
+            api_key=endpoint.api_key,
+            api_version=api_version,
+            timeout=timeout,
+        )
+        async_client = AsyncAzureOpenAI(
+            base_url=endpoint.base_url,
+            api_key=endpoint.api_key,
+            api_version=api_version,
+            timeout=timeout,
+        )
+    else:
+        client = OpenAI(
+            base_url=endpoint.base_url,
+            api_key=endpoint.api_key,
+            timeout=timeout,
+        )
+        async_client = AsyncOpenAI(
+            base_url=endpoint.base_url,
+            api_key=endpoint.api_key,
+            timeout=timeout,
+        )
+
+    logger.debug("Clients created successfully with timeout=%s", timeout)
     return client, async_client
 
 
