@@ -249,6 +249,24 @@ LOCAL_AGENT_MODEL_TYPE=deepseek-ai/deepseek-v3.2
 当前端点配置使用 `base_url` / `api_key` / `weight`，并可通过 `use_azure`
 指定客户端类型（AzureOpenAI / OpenAI）。
 
+**context_window 配置**：可为每个模型配置 `context_window`（上下文窗口大小，单位：tokens）。
+这个值用于 CAMEL 的 ChatAgent 自动压缩 memory。如果模型不在 CAMEL 的 `ModelType` 枚举中，
+需要手动配置此值以避免启动时的警告。
+
+```yaml
+deepseek-ai/deepseek-v3.2:
+  context_window: 163840  # DeepSeek-V3.2 的上下文窗口大小
+  endpoints:
+    - base_url: "https://integrate.api.nvidia.com/v1"
+      api_key: "YOUR_NVIDIA_API_KEY"
+      # ...
+```
+
+常见模型的 context window 大小：
+- DeepSeek-V3.2: 163,840 tokens
+- GPT-4o: 128,000 tokens
+- Claude 3.5 Sonnet: 200,000 tokens
+
 **禁用无效 Key**：将 `weight` 设为 `0` 可禁用该 endpoint。
 
 可用 `LOCAL_AGENT_REQUEST_TIMEOUT` 覆盖请求超时时间（默认 120 秒）。

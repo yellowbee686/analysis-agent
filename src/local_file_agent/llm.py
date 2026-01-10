@@ -121,6 +121,17 @@ class ModelConfig:
             return {}
         return models[model_name].get("params", {})
 
+    def get_context_window(self, model_name: str) -> int | None:
+        """Get context window size for a model.
+
+        Returns:
+            Context window size in tokens, or None if not configured.
+        """
+        models = self._config.get("models", {})
+        if model_name not in models:
+            return None
+        return models[model_name].get("context_window")
+
     def list_models(self) -> list[str]:
         models = self._config.get("models", {})
         return sorted(models.keys())
@@ -270,3 +281,15 @@ def get_model_params(model_name: str) -> dict:
         Dictionary of model parameters (temperature, top_p, etc.).
     """
     return _get_model_config().get_model_params(model_name)
+
+
+def get_context_window(model_name: str) -> int | None:
+    """Get context window size for a model from config.
+
+    This value is used by camel's ChatAgent to determine when to auto-compress
+    memory. If not configured, camel will use the model's default token_limit.
+
+    Returns:
+        Context window size in tokens, or None if not configured.
+    """
+    return _get_model_config().get_context_window(model_name)

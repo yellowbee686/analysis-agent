@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 # Models to test from base.yaml / base.yaml.example
 NVIDIA_MODELS = [
-    "deepseek-ai/deepseek-v3.2",  # Thinking enabled via extra_body
+    "deepseek-ai/deepseek-v3.2",  # Thinking: extra_body.chat_template_kwargs.thinking=true
     "minimaxai/minimax-m2.1",      # Has built-in thinking (<think> tags in content)
     "z-ai/glm4.7",                 # May have thinking
     "openai/gpt-oss-120b",         # Has reasoning_effort param

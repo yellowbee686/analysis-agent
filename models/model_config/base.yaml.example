@@ -6,9 +6,11 @@ models:
 
   # DeepSeek V3.2 (HF: deepseek-ai/DeepSeek-V3.2)
   # Ref: https://huggingface.co/deepseek-ai/DeepSeek-V3.2
+  # Context window: 163,840 tokens (https://blog.galaxy.ai/model/deepseek-v3-2)
   # Thinking: enable via extra_body.chat_template_kwargs.enable_thinking
   # When enabled, API returns reasoning_content in response
   deepseek-ai/deepseek-v3.2:
+    context_window: 163840  # Used by camel for memory auto-compression
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
         api_key: "YOUR_NVIDIA_API_KEY"
@@ -19,7 +21,7 @@ models:
       top_p: 0.95
       extra_body:
         chat_template_kwargs:
-          enable_thinking: true
+          thinking: true
 
   # MiniMax M2.1 (HF: MiniMaxAI/MiniMax-M2.1)
   # Ref: https://huggingface.co/MiniMaxAI/MiniMax-M2.1

@@ -11,7 +11,12 @@ from camel.toolkits.semantic_scholar_toolkit import SemanticScholarToolkit
 from camel.types import ModelPlatformType, ModelType
 
 from local_file_agent.config import AppConfig
-from local_file_agent.llm import build_openai_clients, get_model_params, select_endpoint
+from local_file_agent.llm import (
+    build_openai_clients,
+    get_context_window,
+    get_model_params,
+    select_endpoint,
+)
 from local_file_agent.mcp import get_mcp_tools, get_session_storage_path, is_mcp_connected
 from local_file_agent.tools import (
     ChunkedFileTools,
@@ -272,11 +277,22 @@ def build_agent(tools: LocalDocTools, config: AppConfig) -> ChatAgent:
     if sanitize_tools:
         tool_list = [_wrap_tool(tool) for tool in tool_list]
 
+    # Get context window size from config if available
+    # This prevents camel from warning about unknown models
+    context_window = get_context_window(str(model_type_name))
+    if context_window:
+        logger.info(
+            "Using context_window=%d for model '%s'",
+            context_window,
+            model_type_name,
+        )
+
     agent = ChatAgent(
         system_message=system_message,
         model=model,
         tools=tool_list,
         stream_accumulate=False,
+        token_limit=context_window,  # Override camel's default if configured
     )
     agent.reset()
     logger.info("Agent built successfully")
