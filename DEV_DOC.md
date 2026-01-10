@@ -43,15 +43,16 @@
 
 ### 2.3 依赖管理（uv）与引入方式（结论）
 
-**结论：优先使用 package（uv 管理），不使用 submodule。**
-- **CAMEL：使用本地路径依赖（editable/路径依赖）**  
-  目的：能跟进本地源码调试/修补，同时避免子模块带来的仓库体积与更新成本。  
-  当无需本地改动时，可切换为 PyPI 版本以便于部署。
+**结论：依赖优先使用 package（uv 管理），但 CAMEL 例外，作为 submodule 引入。**
+- **CAMEL：使用本仓库 submodule（`camel/`，跟踪 `dev` 分支）**  
+  目的：在 fork 上独立修复 bug，同时保留 `master` 跟进上游的能力。  
+  如需回退为 PyPI 版本，请移除 submodule 并改回包依赖。
 - **Streamlit：使用 PyPI 包**  
   Streamlit 仓库包含前端与构建链路，作为 submodule 引入成本高、对本项目无必要。
 
 **uv 方式（建议）**
 ```
+git submodule update --init --recursive
 uv sync
 uv run streamlit run app.py
 ```

@@ -1,3 +1,7 @@
 [submodule "mcp_servers/CbetaMCP"]
 	path = mcp_servers/CbetaMCP
 	url = https://github.com/yellowbee686/CbetaMCP.git
+[submodule "camel"]
+	path = camel
+	url = https://github.com/yellowbee686/camel.git
+	branch = dev
