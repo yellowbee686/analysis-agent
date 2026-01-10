@@ -413,7 +413,9 @@ def main() -> None:
             key="selected_model_type",
         )
 
-    enable_stream = True
+    # Use stream setting from config (set via LOCAL_AGENT_STREAM env var)
+    # Note: _should_use_stream in agent.py also checks model-specific patterns
+    enable_stream = config.stream
 
     index = build_index(
         data_dir=config.data_dir,

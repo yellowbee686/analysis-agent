@@ -229,10 +229,11 @@ LOCAL_AGENT_MODEL_TYPE=deepseek-ai/deepseek-v3.2
 - 未设置时回退到 CAMEL 默认值（由 `DEFAULT_MODEL_PLATFORM_TYPE` 与 `DEFAULT_MODEL_TYPE` 控制）。
 - 可使用 `LOCAL_AGENT_SYSTEM_PROMPT` 覆盖系统提示词（可选）。
 - `LOCAL_AGENT_MAX_TOKENS` 默认 65535，用于避免 CAMEL 关于 `max_tokens` 的警告。
-- `LOCAL_AGENT_STREAM` 控制流式输出（默认 true）。
+- `LOCAL_AGENT_STREAM` 控制流式输出（默认 true）。设为 `false` 可完全禁用流式输出。
+  - 建议禁用场景：thinking model 的 reasoning 内容在 stream 模式下不显示、模型不支持 stream 模式下的 tool_call
 - `LOCAL_AGENT_NON_STREAM_PATTERNS` 指定不使用流式输出的模型名称模式，逗号分隔（默认 `gemini`）。
   - 例如：`gemini,claude` 会禁用所有包含 "gemini" 或 "claude" 的模型的流式输出。
-  - 设为空字符串 `""` 可让所有模型使用流式输出。
+  - 设为空字符串 `""` 可让所有模型使用流式输出（除非 `LOCAL_AGENT_STREAM=false`）。
 
 ### 8.1 多 Key 随机采样（参考 ttlive_strategy_agent）
 当前项目支持从 `models/model_config/base.yaml` 读取模型端点列表（如不存在则回退到
