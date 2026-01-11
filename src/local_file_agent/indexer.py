@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,17 +59,21 @@ class LocalIndex:
         root_dir: Path,
         chunk_max_chars: int = 1200,
         snippet_chars: int = 400,
+        index_dir: Path | None = None,
     ):
-        self.root_dir = root_dir
+        self.root_dir = root_dir.resolve()
         self.chunk_max_chars = chunk_max_chars
         self.snippet_chars = snippet_chars
+        self.index_dir = index_dir
         self.chunks: List[DocChunk] = []
         self.files: List[Path] = []
         self.total_chars = 0
         self._bm25 = None
         self._bm25_tokens: List[List[str]] = []
 
-    def build(self) -> None:
+    def build(self, force_rebuild: bool = False) -> None:
+        if not force_rebuild and self._load_cache():
+            return
         self.files = find_markdown_files(self.root_dir)
         chunks: List[DocChunk] = []
         total_chars = 0
@@ -101,6 +107,7 @@ class LocalIndex:
         self.chunks = chunks
         self.total_chars = total_chars
         self._build_bm25_index()
+        self._save_cache()
 
     def _split_large_chunk(
         self, path: str, heading: str, text: str, start_line: int
@@ -230,3 +237,197 @@ class LocalIndex:
             "chunk_count": len(self.chunks),
             "total_chars": self.total_chars,
         }
+
+    def search_exact(
+        self, pattern: str, max_results: int = 20, case_sensitive: bool = False
+    ) -> List[dict]:
+        """Exact substring search in indexed chunks.
+
+        Unlike BM25 semantic search, this performs exact string matching.
+        Useful for finding specific keywords, error codes, function names,
+        or phrases that BM25 might not rank highly.
+
+        Args:
+            pattern: The exact string to search for.
+            max_results: Maximum number of results to return.
+            case_sensitive: Whether to perform case-sensitive matching.
+
+        Returns:
+            List of matching chunks with path, heading, start_line, and snippet.
+        """
+        if not pattern:
+            return []
+
+        results = []
+        pattern_match = pattern if case_sensitive else pattern.lower()
+
+        for chunk in self.chunks:
+            text_match = chunk.text if case_sensitive else chunk.text.lower()
+            if pattern_match in text_match:
+                # Find the position of the match for context
+                pos = text_match.find(pattern_match)
+                # Extract context around the match
+                context_start = max(0, pos - 100)
+                context_end = min(len(chunk.text), pos + len(pattern) + 100)
+                context = chunk.text[context_start:context_end]
+                if context_start > 0:
+                    context = "..." + context
+                if context_end < len(chunk.text):
+                    context = context + "..."
+
+                results.append({
+                    "path": chunk.path,
+                    "heading": chunk.heading,
+                    "start_line": chunk.start_line,
+                    "match_position": pos,
+                    "context": context.replace("\n", " "),
+                })
+
+                if len(results) >= max_results:
+                    break
+
+        return results
+
+    def get_chunk_content(
+        self, path: str, heading: str | None = None, start_line: int | None = None
+    ) -> dict | None:
+        """Get full content of a specific chunk.
+
+        Can match by path + heading, or by path + start_line for more precision.
+        Useful after retrieve_local_docs returns snippets and user wants
+        to read the full chunk content.
+
+        Args:
+            path: The file path of the chunk.
+            heading: The heading of the chunk (optional if start_line provided).
+            start_line: The start line of the chunk (optional, for precise matching).
+
+        Returns:
+            Dict with full chunk content, or None if not found.
+        """
+        for chunk in self.chunks:
+            # Match by path first
+            if chunk.path != path and not chunk.path.endswith(path):
+                continue
+
+            # If start_line is provided, use it for precise matching
+            if start_line is not None:
+                if chunk.start_line == start_line:
+                    return {
+                        "path": chunk.path,
+                        "heading": chunk.heading,
+                        "start_line": chunk.start_line,
+                        "content": chunk.text,
+                        "char_count": len(chunk.text),
+                    }
+            # Otherwise match by heading
+            elif heading is not None:
+                if chunk.heading == heading:
+                    return {
+                        "path": chunk.path,
+                        "heading": chunk.heading,
+                        "start_line": chunk.start_line,
+                        "content": chunk.text,
+                        "char_count": len(chunk.text),
+                    }
+
+        return None
+
+    def list_chunks_in_file(self, path: str) -> List[dict]:
+        """List all chunks in a specific file.
+
+        Useful for browsing the structure of a document after finding it
+        through search.
+
+        Args:
+            path: The file path to list chunks for.
+
+        Returns:
+            List of chunk metadata (heading, start_line, char_count).
+        """
+        results = []
+        for chunk in self.chunks:
+            if chunk.path == path or chunk.path.endswith(path):
+                results.append({
+                    "heading": chunk.heading,
+                    "start_line": chunk.start_line,
+                    "char_count": len(chunk.text),
+                    "preview": chunk.text[:100].replace("\n", " ") + "..."
+                    if len(chunk.text) > 100 else chunk.text.replace("\n", " "),
+                })
+        return results
+
+    def _cache_path(self) -> Path | None:
+        if not self.index_dir:
+            return None
+        key_material = "|".join(
+            [
+                str(self.root_dir),
+                str(self.chunk_max_chars),
+                str(self.snippet_chars),
+            ]
+        )
+        digest = hashlib.sha256(
+            key_material.encode("utf-8")
+        ).hexdigest()[:12]
+        return self.index_dir / f"index_{digest}.json"
+
+    def _load_cache(self) -> bool:
+        cache_path = self._cache_path()
+        if not cache_path or not cache_path.exists():
+            return False
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if payload.get("version") != 1:
+            return False
+        if payload.get("root_dir") != str(self.root_dir):
+            return False
+        if payload.get("chunk_max_chars") != self.chunk_max_chars:
+            return False
+        if payload.get("snippet_chars") != self.snippet_chars:
+            return False
+        self.files = [Path(p) for p in payload.get("files", [])]
+        self.total_chars = int(payload.get("total_chars", 0))
+        self.chunks = [
+            DocChunk(
+                path=chunk["path"],
+                heading=chunk["heading"],
+                text=chunk["text"],
+                start_line=int(chunk["start_line"]),
+            )
+            for chunk in payload.get("chunks", [])
+        ]
+        self._build_bm25_index()
+        return True
+
+    def _save_cache(self) -> None:
+        cache_path = self._cache_path()
+        if not cache_path:
+            return
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "root_dir": str(self.root_dir),
+                "chunk_max_chars": self.chunk_max_chars,
+                "snippet_chars": self.snippet_chars,
+                "files": [str(path) for path in self.files],
+                "total_chars": self.total_chars,
+                "chunks": [
+                    {
+                        "path": chunk.path,
+                        "heading": chunk.heading,
+                        "text": chunk.text,
+                        "start_line": chunk.start_line,
+                    }
+                    for chunk in self.chunks
+                ],
+            }
+            cache_path.write_text(
+                json.dumps(payload, ensure_ascii=True),
+                encoding="utf-8",
+            )
+        except OSError:
+            return

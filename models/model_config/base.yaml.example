@@ -1,0 +1,72 @@
+# Copy to base.yaml and fill in real API keys.
+model_provider: "base"
+models:
+  # NVIDIA API Models (https://integrate.api.nvidia.com/v1)
+  # Fill in your NVIDIA API key below.
+
+  # DeepSeek V3.2 (HF: deepseek-ai/DeepSeek-V3.2)
+  # Ref: https://huggingface.co/deepseek-ai/DeepSeek-V3.2
+  # Context window: 163,840 tokens (https://blog.galaxy.ai/model/deepseek-v3-2)
+  # Thinking: enable via extra_body.chat_template_kwargs.enable_thinking
+  # When enabled, API returns reasoning_content in response
+  deepseek-ai/deepseek-v3.2:
+    context_window: 163840  # Used by camel for memory auto-compression
+    endpoints:
+      - base_url: "https://integrate.api.nvidia.com/v1"
+        api_key: "YOUR_NVIDIA_API_KEY"
+        weight: 1
+        use_azure: false
+    params:
+      temperature: 1.0
+      top_p: 0.95
+      extra_body:
+        chat_template_kwargs:
+          thinking: true
+
+  # MiniMax M2.1 (HF: MiniMaxAI/MiniMax-M2.1)
+  # Ref: https://huggingface.co/MiniMaxAI/MiniMax-M2.1
+  # Thinking: enabled by default, outputs <think>...</think> tags
+  minimaxai/minimax-m2.1:
+    endpoints:
+      - base_url: "https://integrate.api.nvidia.com/v1"
+        api_key: "YOUR_NVIDIA_API_KEY"
+        weight: 1
+        use_azure: false
+    params:
+      temperature: 1.0
+      top_p: 0.95
+
+  # GLM 4.7 (HF: zai-org/GLM-4.7)
+  # Ref: https://huggingface.co/zai-org/GLM-4.7
+  # Thinking: enabled by default
+  z-ai/glm4.7:
+    endpoints:
+      - base_url: "https://integrate.api.nvidia.com/v1"
+        api_key: "YOUR_NVIDIA_API_KEY"
+        weight: 1
+        use_azure: false
+    params:
+      temperature: 1.0
+      top_p: 0.95
+
+  # GPT-OSS 120B (HF: openai/gpt-oss-120b)
+  # Ref: https://huggingface.co/openai/gpt-oss-120b
+  # Thinking: via reasoning_effort (low/medium/high)
+  openai/gpt-oss-120b:
+    endpoints:
+      - base_url: "https://integrate.api.nvidia.com/v1"
+        api_key: "YOUR_NVIDIA_API_KEY"
+        weight: 1
+        use_azure: false
+    params:
+      temperature: 1.0
+      top_p: 1.0
+      reasoning_effort: high
+
+  # Example custom model (OpenAI-compatible)
+  # my-openai-compatible-model:
+  #   endpoints:
+  #     - base_url: "https://example.com/v1"
+  #       api_key: "YOUR_API_KEY"
+  #       weight: 1
+  #       use_azure: false

@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 from dataclasses import replace
 from pathlib import Path
 import sys
 
 import streamlit as st
+
+# Configure logging for debugging
+logging.basicConfig(
+    level=logging.DEBUG if os.environ.get("DEBUG") else logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stderr)],
+)
+logger = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).resolve().parent
 SRC_DIR = ROOT_DIR / "src"
@@ -15,22 +26,127 @@ from local_file_agent.agent import build_agent  # noqa: E402
 from local_file_agent.config import load_config  # noqa: E402
 from local_file_agent.indexer import LocalIndex  # noqa: E402
 from local_file_agent.llm import list_models  # noqa: E402
-from camel.agents.chat_agent import StreamingChatAgentResponse  # noqa: E402
+from local_file_agent.mcp import (  # noqa: E402
+    connect_mcp,
+    get_session_id,
+    is_mcp_connected,
+    set_content_threshold,
+    set_session_id,
+)
+from local_file_agent.history import (  # noqa: E402
+    append_message as append_history_message,
+    cleanup_empty_sessions,
+    delete_session,
+    ensure_history_dir,
+    init_session,
+    list_sessions,
+    load_messages,
+    new_session_path,
+)
+from camel.agents.chat_agent import (  # noqa: E402
+    StreamingChatAgentResponse,
+    AsyncStreamingChatAgentResponse,
+)
+from camel.messages import BaseMessage  # noqa: E402
 from local_file_agent.tools import LocalDocTools  # noqa: E402
-from camel.types import ModelPlatformType  # noqa: E402
+from camel.types import ModelPlatformType, OpenAIBackendRole  # noqa: E402
 
 
-@st.cache_resource(show_spinner="Indexing markdown files...")
+def _merge_stream_text(current: str, incoming: str | None) -> str:
+    if not incoming:
+        return current
+    if not current:
+        return incoming
+    if incoming.startswith(current):
+        return incoming
+    return current + incoming
+
+
+def run_agent_step_async(
+    agent,
+    user_input: str,
+    on_partial: callable | None = None,
+):
+    """Run agent step asynchronously to support MCP tools.
+    
+    MCP tools with streamable-http transport require all calls to happen
+    in the same event loop. The synchronous streaming mode uses ThreadPoolExecutor
+    which creates separate threads with new event loops, causing MCP calls to hang.
+    
+    This function runs the agent step in async mode and streams results via callback.
+    Uses the MCP event loop saved in session_state for compatibility.
+    
+    Args:
+        agent: The ChatAgent instance
+        user_input: User's input message
+        on_partial: Optional callback function called for each partial response.
+                   Signature: on_partial(partial) -> None
+                   This enables real-time UI updates during streaming.
+    
+    Returns:
+        List of all partial responses collected during streaming.
+    """
+    async def _run():
+        response = await agent.astep(user_input)
+        if isinstance(response, AsyncStreamingChatAgentResponse):
+            # Stream responses with real-time callback
+            results = []
+            async for partial in response:
+                results.append(partial)
+                # Call the callback for real-time UI updates
+                if on_partial is not None:
+                    on_partial(partial)
+            return results
+        else:
+            # Non-streaming response
+            if on_partial is not None:
+                on_partial(response)
+            return [response]
+    
+    # Use the event loop that was used for MCP connection
+    # This is critical for streamable-http transport compatibility
+    loop = st.session_state.get("mcp_event_loop")
+    if loop is None:
+        # Fallback: try to get or create an event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+    else:
+        # Ensure the MCP event loop is set as current
+        asyncio.set_event_loop(loop)
+    
+    return loop.run_until_complete(_run())
+
+
 def build_index(
-    data_dir: str, chunk_max_chars: int, snippet_chars: int
+    *,
+    data_dir: Path,
+    index_dir: Path,
+    chunk_max_chars: int,
+    snippet_chars: int,
+    force_rebuild: bool,
 ) -> LocalIndex:
-    index = LocalIndex(
-        Path(data_dir),
-        chunk_max_chars=chunk_max_chars,
-        snippet_chars=snippet_chars,
+    index_key = (
+        str(data_dir),
+        str(index_dir),
+        chunk_max_chars,
+        snippet_chars,
     )
-    index.build()
-    return index
+    cached_index = st.session_state.get("index")
+    cached_key = st.session_state.get("index_key")
+    if cached_index is None or cached_key != index_key or force_rebuild:
+        index = LocalIndex(
+            data_dir,
+            chunk_max_chars=chunk_max_chars,
+            snippet_chars=snippet_chars,
+            index_dir=index_dir,
+        )
+        index.build(force_rebuild=force_rebuild)
+        st.session_state["index"] = index
+        st.session_state["index_key"] = index_key
+    return st.session_state["index"]
 
 
 def ensure_session_state() -> None:
@@ -50,86 +166,289 @@ def ensure_session_state() -> None:
         st.session_state["agent_max_tokens"] = 0
     if "agent_stream" not in st.session_state:
         st.session_state["agent_stream"] = True
+    if "history_path" not in st.session_state:
+        st.session_state["history_path"] = ""
+    if "index" not in st.session_state:
+        st.session_state["index"] = None
+    if "index_key" not in st.session_state:
+        st.session_state["index_key"] = None
+    if "mcp_connected" not in st.session_state:
+        st.session_state["mcp_connected"] = False
+
+
+def init_mcp_connection(config) -> bool:
+    """Initialize MCP connection if enabled.
+
+    Returns True if MCP is connected or not enabled.
+    """
+    if not config.mcp_enabled:
+        return True
+
+    if st.session_state.get("mcp_connected"):
+        return True
+
+    if config.mcp_config_path is None:
+        logger.warning("MCP enabled but no config path provided")
+        return False
+
+    try:
+        # Set content threshold for large response handling
+        set_content_threshold(config.mcp_content_threshold)
+        logger.info(
+            "MCP content threshold set to %d chars",
+            config.mcp_content_threshold
+        )
+
+        # Run async connection in event loop
+        # We create and save the event loop so it can be reused for MCP tool calls
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        st.session_state["mcp_event_loop"] = loop  # Save for reuse in agent calls
+        toolkit = loop.run_until_complete(connect_mcp(config.mcp_config_path))
+        if toolkit is not None:
+            st.session_state["mcp_connected"] = True
+            logger.info("MCP connection established")
+            return True
+        else:
+            logger.warning("Failed to connect to MCP servers")
+            return False
+    except Exception as e:
+        logger.error("Error initializing MCP connection: %s", e)
+        return False
+
+
+def start_history_session(
+    history_dir: Path,
+    *,
+    data_dir: str,
+    chunk_max_chars: int,
+    model_platform: str,
+    model_type: str,
+    max_tokens: int,
+    stream: bool,
+) -> Path:
+    path = new_session_path(history_dir)
+    meta = {
+        "data_dir": data_dir,
+        "chunk_max_chars": chunk_max_chars,
+        "model_platform": model_platform,
+        "model_type": model_type,
+        "max_tokens": max_tokens,
+        "stream": stream,
+    }
+    init_session(path, meta)
+
+    # Set session ID for MCP storage
+    # Use the session filename (without extension) as the session ID
+    session_id = path.stem
+    set_session_id(session_id)
+    logger.debug("Set MCP session ID: %s", session_id)
+
+    return path
+
+
+def _get_query_param(name: str) -> str:
+    if hasattr(st, "query_params"):
+        value = st.query_params.get(name)
+    else:
+        value = st.experimental_get_query_params().get(name)
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return value or ""
+
+
+def _clear_query_params() -> None:
+    if hasattr(st, "query_params"):
+        st.query_params.clear()
+    else:
+        st.experimental_set_query_params()
+
+
+def _start_new_conversation(
+    history_dir: Path,
+    *,
+    data_dir: str,
+    chunk_max_chars: int,
+    model_platform: str,
+    model_type: str,
+    max_tokens: int,
+    stream: bool,
+) -> None:
+    st.session_state["messages"] = []
+    agent = st.session_state.get("agent")
+    if agent is not None:
+        agent.reset()
+    history_path = start_history_session(
+        history_dir,
+        data_dir=data_dir,
+        chunk_max_chars=chunk_max_chars,
+        model_platform=model_platform,
+        model_type=model_type,
+        max_tokens=max_tokens,
+        stream=stream,
+    )
+    st.session_state["history_path"] = str(history_path)
+
+
+def _select_history_session(path: Path) -> None:
+    st.session_state["history_path"] = str(path)
+    st.session_state["messages"] = load_messages(path)
+
+    # Set session ID for MCP storage
+    session_id = path.stem
+    set_session_id(session_id)
+    logger.debug("Set MCP session ID for selected session: %s", session_id)
+
+    agent = st.session_state.get("agent")
+    if agent is not None:
+        agent.reset()
+        try:
+            for message in st.session_state["messages"]:
+                role = message.get("role", "assistant")
+                content = message.get("content", "")
+                if role == "user":
+                    msg = BaseMessage.make_user_message("User", content)
+                    agent.update_memory(msg, OpenAIBackendRole.USER)
+                else:
+                    msg = BaseMessage.make_assistant_message(
+                        "Assistant", content
+                    )
+                    agent.update_memory(msg, OpenAIBackendRole.ASSISTANT)
+        except Exception:
+            agent.reset()
+
+
+def _render_history_list(
+    sessions: list,
+    *,
+    selected_id: str,
+) -> None:
+    """Render history list using native Streamlit components with popover menu."""
+    if not sessions:
+        st.sidebar.caption("No history yet.")
+        return
+
+    with st.sidebar:
+        for session in sessions:
+            label = session.label or "(no questions yet)"
+            session_id = session.path.name
+            is_selected = session.path.name == selected_id
+
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                # Use button for selection
+                button_type = "primary" if is_selected else "secondary"
+                if st.button(
+                    label,
+                    key=f"history_open_{session_id}",
+                    use_container_width=True,
+                    type=button_type,
+                    help=label,
+                ):
+                    _select_history_session(session.path)
+                    st.rerun()
+            with col2:
+                # Context menu using popover
+                with st.popover("⋮", help="More options"):
+                    if st.button(
+                        "🗑️ Delete",
+                        key=f"history_delete_{session_id}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["pending_delete"] = session_id
+                        st.rerun()
 
 
 def main() -> None:
     st.set_page_config(page_title="Local File Agent", layout="wide")
     config = load_config()
     ensure_session_state()
+    history_dir = ensure_history_dir()
 
-    st.sidebar.header("Index Settings")
-    data_dir = st.sidebar.text_input(
-        "Data directory", value=str(config.data_dir)
-    )
-    chunk_max_chars = st.sidebar.number_input(
-        "Chunk max chars",
-        min_value=200,
-        max_value=5000,
-        value=int(config.chunk_max_chars),
-        step=100,
-    )
-    if st.sidebar.button("Rebuild index"):
-        build_index.clear()
+    # Initialize MCP connection if enabled
+    if config.mcp_enabled and not st.session_state.get("mcp_connected"):
+        with st.spinner("Connecting to MCP servers..."):
+            mcp_ok = init_mcp_connection(config)
+            if mcp_ok and is_mcp_connected():
+                st.toast("MCP servers connected!", icon="✅")
+            elif config.mcp_enabled:
+                st.toast("MCP connection failed, tools unavailable", icon="⚠️")
+
+    # Clean up empty sessions (no user messages) at startup
+    if "startup_cleanup_done" not in st.session_state:
+        cleanup_empty_sessions(history_dir)
+        st.session_state["startup_cleanup_done"] = True
+        # If current session was cleaned up, clear the history_path
+        current_path = st.session_state.get("history_path", "")
+        if current_path and not Path(current_path).exists():
+            st.session_state["history_path"] = ""
+            st.session_state["messages"] = []
+
+    st.sidebar.header("Index")
+    rebuild_index = st.sidebar.button("Rebuild index")
 
     st.sidebar.header("Model Settings")
     platform_values = [p.value for p in ModelPlatformType]
-    default_platform = (
+    selected_platform = (
         config.model_platform
         if config.model_platform in platform_values
         else ModelPlatformType.DEFAULT.value
     )
-    selected_platform = st.sidebar.selectbox(
-        "Model platform",
-        options=platform_values,
-        index=platform_values.index(default_platform),
-    )
     model_options = list_models()
-    model_options_with_custom = ["(custom)"] + model_options
-    selected_model = st.sidebar.selectbox(
-        "Model type",
-        options=model_options_with_custom,
-        index=(
-            model_options_with_custom.index(config.model_type)
-            if config.model_type in model_options_with_custom
-            else 0
-        ),
-    )
-    custom_model_type = ""
-    if selected_model == "(custom)":
-        custom_model_type = st.sidebar.text_input(
-            "Custom model type",
-            value=config.model_type or "",
-        ).strip()
-
-    model_type_value = (
-        custom_model_type if selected_model == "(custom)" else selected_model
-    )
-    if not model_type_value:
+    if not model_options:
+        st.sidebar.caption("No models configured.")
         model_type_value = config.model_type or ""
+    else:
+        default_model = st.session_state.get("selected_model_type")
+        if default_model not in model_options:
+            default_model = (
+                config.model_type
+                if config.model_type in model_options
+                else model_options[0]
+            )
+        st.session_state["selected_model_type"] = default_model
+        model_type_value = st.sidebar.selectbox(
+            "Model type",
+            options=model_options,
+            key="selected_model_type",
+        )
 
-    enable_stream = st.sidebar.toggle(
-        "Stream output", value=bool(config.stream)
-    )
+    # Use stream setting from config (set via LOCAL_AGENT_STREAM env var)
+    # Note: _should_use_stream in agent.py also checks model-specific patterns
+    enable_stream = config.stream
 
     index = build_index(
-        data_dir, int(chunk_max_chars), int(config.snippet_chars)
+        data_dir=config.data_dir,
+        index_dir=config.index_dir,
+        chunk_max_chars=int(config.chunk_max_chars),
+        snippet_chars=int(config.snippet_chars),
+        force_rebuild=rebuild_index,
     )
     stats = index.stats()
-    st.sidebar.caption(
-        f"Files: {stats['file_count']} | "
-        f"Chunks: {stats['chunk_count']} | "
-        f"Chars: {stats['total_chars']}"
-    )
 
-    if (
+    # Check if we need to rebuild the agent
+    need_rebuild = (
         st.session_state["agent"] is None
-        or st.session_state["agent_data_dir"] != data_dir
-        or st.session_state["agent_chunk_max"] != int(chunk_max_chars)
+        or st.session_state["agent_data_dir"] != str(config.data_dir)
+        or st.session_state["agent_chunk_max"] != int(config.chunk_max_chars)
         or st.session_state["agent_model_platform"] != selected_platform
         or st.session_state["agent_model_type"] != model_type_value
         or st.session_state["agent_max_tokens"] != int(config.max_tokens)
         or st.session_state["agent_stream"] != bool(enable_stream)
-    ):
+    )
+
+    # Check if this is just a model switch (don't need new conversation)
+    is_model_switch_only = (
+        st.session_state["agent"] is not None
+        and st.session_state["agent_data_dir"] == str(config.data_dir)
+        and st.session_state["agent_chunk_max"] == int(config.chunk_max_chars)
+        and (
+            st.session_state["agent_model_platform"] != selected_platform
+            or st.session_state["agent_model_type"] != model_type_value
+        )
+    )
+
+    if need_rebuild:
         config = replace(
             config,
             model_platform=selected_platform,
@@ -138,20 +457,194 @@ def main() -> None:
         )
         tools = LocalDocTools(index)
         st.session_state["agent"] = build_agent(tools, config)
-        st.session_state["agent_data_dir"] = data_dir
-        st.session_state["agent_chunk_max"] = int(chunk_max_chars)
+        st.session_state["agent_data_dir"] = str(config.data_dir)
+        st.session_state["agent_chunk_max"] = int(config.chunk_max_chars)
         st.session_state["agent_model_platform"] = selected_platform
         st.session_state["agent_model_type"] = model_type_value
         st.session_state["agent_max_tokens"] = int(config.max_tokens)
         st.session_state["agent_stream"] = bool(enable_stream)
-        st.session_state["messages"] = []
+
+        # Only reset conversation if this is NOT just a model switch
+        if not is_model_switch_only:
+            st.session_state["messages"] = []
+            history_path = start_history_session(
+                history_dir,
+                data_dir=str(config.data_dir),
+                chunk_max_chars=int(config.chunk_max_chars),
+                model_platform=selected_platform,
+                model_type=model_type_value,
+                max_tokens=int(config.max_tokens),
+                stream=bool(enable_stream),
+            )
+            st.session_state["history_path"] = str(history_path)
+        else:
+            # Model switch: restore agent memory from current messages
+            agent = st.session_state["agent"]
+            agent.reset()
+            try:
+                for message in st.session_state["messages"]:
+                    role = message.get("role", "assistant")
+                    content = message.get("content", "")
+                    if role == "user":
+                        msg = BaseMessage.make_user_message("User", content)
+                        agent.update_memory(msg, OpenAIBackendRole.USER)
+                    else:
+                        msg = BaseMessage.make_assistant_message(
+                            "Assistant", content
+                        )
+                        agent.update_memory(msg, OpenAIBackendRole.ASSISTANT)
+            except Exception:
+                agent.reset()
+
+    st.sidebar.header("History")
+    new_chat_clicked = st.sidebar.button(
+        "New conversation",
+        use_container_width=True,
+    )
+    if new_chat_clicked:
+        _start_new_conversation(
+            history_dir,
+            data_dir=str(config.data_dir),
+            chunk_max_chars=int(config.chunk_max_chars),
+            model_platform=selected_platform,
+            model_type=model_type_value,
+            max_tokens=int(config.max_tokens),
+            stream=bool(enable_stream),
+        )
+
+    sessions = list_sessions(history_dir)
+    session_lookup = {session.path.name: session.path for session in sessions}
+    history_action = _get_query_param("history_action")
+    session_id = _get_query_param("session")
+    if history_action and session_id:
+        target = session_lookup.get(session_id)
+        if history_action == "delete" and target:
+            delete_session(target)
+            # Refresh sessions list after deletion
+            sessions = list_sessions(history_dir)
+            session_lookup = {
+                session.path.name: session.path for session in sessions
+            }
+            # If deleted the current session, switch to most recent or create new
+            if st.session_state.get("history_path") == str(target):
+                if sessions:
+                    # Select the most recent session
+                    _select_history_session(sessions[0].path)
+                else:
+                    # No sessions left, create a new one
+                    _start_new_conversation(
+                        history_dir,
+                        data_dir=str(config.data_dir),
+                        chunk_max_chars=int(config.chunk_max_chars),
+                        model_platform=selected_platform,
+                        model_type=model_type_value,
+                        max_tokens=int(config.max_tokens),
+                        stream=bool(enable_stream),
+                    )
+                    sessions = list_sessions(history_dir)
+                    session_lookup = {
+                        session.path.name: session.path for session in sessions
+                    }
+            _clear_query_params()
+            st.rerun()
+        elif history_action == "open" and target:
+            _select_history_session(target)
+            _clear_query_params()
+            st.rerun()
+
+    if not st.session_state.get("history_path"):
+        if sessions:
+            _select_history_session(sessions[0].path)
+        else:
+            _start_new_conversation(
+                history_dir,
+                data_dir=str(config.data_dir),
+                chunk_max_chars=int(config.chunk_max_chars),
+                model_platform=selected_platform,
+                model_type=model_type_value,
+                max_tokens=int(config.max_tokens),
+                stream=bool(enable_stream),
+            )
+            sessions = list_sessions(history_dir)
+            session_lookup = {
+                session.path.name: session.path for session in sessions
+            }
+
+    selected_id = ""
+    history_path_value = st.session_state.get("history_path", "")
+    if history_path_value:
+        selected_id = Path(history_path_value).name
+        # Ensure MCP session ID is synced with history session
+        # This handles cases where session_state is restored but module globals are reset
+        current_session_id = Path(history_path_value).stem
+        if get_session_id() != current_session_id:
+            set_session_id(current_session_id)
+            logger.debug("Synced MCP session ID: %s", current_session_id)
+
+    # Handle pending delete from history list
+    pending_delete = st.session_state.pop("pending_delete", None)
+    if pending_delete:
+        target = session_lookup.get(pending_delete)
+        if target:
+            delete_session(target)
+            # Refresh sessions list after deletion
+            sessions = list_sessions(history_dir)
+            session_lookup = {
+                session.path.name: session.path for session in sessions
+            }
+            # If deleted the current session, switch to most recent or create new
+            if st.session_state.get("history_path") == str(target):
+                if sessions:
+                    _select_history_session(sessions[0].path)
+                else:
+                    _start_new_conversation(
+                        history_dir,
+                        data_dir=str(config.data_dir),
+                        chunk_max_chars=int(config.chunk_max_chars),
+                        model_platform=selected_platform,
+                        model_type=model_type_value,
+                        max_tokens=int(config.max_tokens),
+                        stream=bool(enable_stream),
+                    )
+                    sessions = list_sessions(history_dir)
+                    session_lookup = {
+                        session.path.name: session.path for session in sessions
+                    }
+            # Update selected_id after deletion
+            history_path_value = st.session_state.get("history_path", "")
+            selected_id = Path(history_path_value).name if history_path_value else ""
+            st.rerun()
+
+    _render_history_list(
+        sessions,
+        selected_id=selected_id,
+    )
+
+    # Display MCP status
+    if config.mcp_enabled:
+        mcp_status = "✅ Connected" if is_mcp_connected() else "❌ Disconnected"
+        st.sidebar.caption(f"MCP: {mcp_status}")
+
+    st.sidebar.caption(
+        f"Files: {stats['file_count']} | "
+        f"Chunks: {stats['chunk_count']} | "
+        f"Chars: {stats['total_chars']}"
+    )
+
+    history_path_value = st.session_state.get("history_path", "")
+    if history_path_value and st.session_state["messages"]:
+        history_path = Path(history_path_value)
+        if not load_messages(history_path):
+            for message in st.session_state["messages"]:
+                append_history_message(
+                    history_path,
+                    message.get("role", "assistant"),
+                    message.get("content", ""),
+                    reasoning=message.get("reasoning", ""),
+                    tool_calls=message.get("tool_calls", []) or [],
+                )
 
     st.title("Local File Analysis Agent")
-
-    if st.sidebar.button("Reset conversation"):
-        st.session_state["messages"] = []
-        if st.session_state["agent"] is not None:
-            st.session_state["agent"].reset()
 
     for message in st.session_state["messages"]:
         with st.chat_message(message["role"]):
@@ -173,6 +666,11 @@ def main() -> None:
         st.session_state["messages"].append(
             {"role": "user", "content": user_input}
         )
+        history_path_value = st.session_state.get("history_path", "")
+        if history_path_value:
+            append_history_message(
+                Path(history_path_value), "user", user_input
+            )
         with st.chat_message("user"):
             st.markdown(user_input)
 
@@ -193,22 +691,70 @@ def main() -> None:
                             st.json(call.get("result", {}))
 
             try:
-                response = agent.step(user_input)
+                logger.info("Sending user input to agent: %s...", user_input[:50])
                 assistant_text = ""
                 reasoning = ""
                 tool_calls = []
                 seen_tool_calls = set()
+                stream_mode = None
+                reasoning_stream_mode = None
 
-                if isinstance(response, StreamingChatAgentResponse):
-                    for partial in response:
+                # Check if MCP is enabled - if so, use async mode to avoid
+                # cross-event-loop issues with streamable-http transport
+                use_async_mode = is_mcp_connected()
+                
+                if use_async_mode:
+                    # Use async mode for MCP tools compatibility
+                    logger.info("Using async mode for MCP tools compatibility")
+                    
+                    # Define callback for real-time UI updates
+                    def on_partial_update(partial):
+                        nonlocal assistant_text, reasoning, stream_mode, reasoning_stream_mode
+                        
                         if partial.msg:
-                            assistant_text = partial.msg.content or ""
+                            content_delta = partial.msg.content
+                            if (
+                                stream_mode is None
+                                and assistant_text
+                                and content_delta
+                            ):
+                                stream_mode = (
+                                    "accumulated"
+                                    if content_delta.startswith(assistant_text)
+                                    else "delta"
+                                )
+                                logger.debug(
+                                    "Detected streaming mode for content: %s",
+                                    stream_mode,
+                                )
+                            assistant_text = _merge_stream_text(
+                                assistant_text, content_delta
+                            )
                             content_placeholder.markdown(assistant_text)
-                            if partial.msg.reasoning_content:
-                                reasoning = partial.msg.reasoning_content
+                            reasoning_delta = partial.msg.reasoning_content
+                            if reasoning_delta is not None:
+                                if (
+                                    reasoning_stream_mode is None
+                                    and reasoning
+                                    and reasoning_delta
+                                ):
+                                    reasoning_stream_mode = (
+                                        "accumulated"
+                                        if reasoning_delta.startswith(reasoning)
+                                        else "delta"
+                                    )
+                                    logger.debug(
+                                        "Detected streaming mode for reasoning: %s",
+                                        reasoning_stream_mode,
+                                    )
+                                reasoning = _merge_stream_text(
+                                    reasoning, reasoning_delta
+                                )
                                 with reasoning_placeholder.container():
                                     st.markdown("**Think summary**")
                                     st.markdown(reasoning)
+                        
+                        # Process tool calls in real-time
                         for record in partial.info.get("tool_calls", []) or []:
                             if hasattr(record, "as_dict"):
                                 record_dict = record.as_dict()
@@ -224,32 +770,103 @@ def main() -> None:
                                 continue
                             seen_tool_calls.add(key)
                             tool_calls.append(record_dict)
+                            # Render tool calls immediately when available
                             render_tools(tool_calls)
+                    
+                    results = run_agent_step_async(
+                        agent, user_input, on_partial=on_partial_update
+                    )
+                    logger.info("Async agent response received, %d results", len(results))
                 else:
-                    assistant_text = (
-                        response.msg.content
-                        if response.msg
-                        else "(no response)"
-                    )
-                    reasoning = (
-                        response.msg.reasoning_content
-                        if response.msg and response.msg.reasoning_content
-                        else ""
-                    )
-                    tool_calls = []
-                    for record in response.info.get("tool_calls", []) or []:
-                        if hasattr(record, "as_dict"):
-                            tool_calls.append(record.as_dict())
-                        elif hasattr(record, "model_dump"):
-                            tool_calls.append(record.model_dump())
-                        else:
-                            tool_calls.append(record)
-                    content_placeholder.markdown(assistant_text)
-                    if reasoning:
-                        with reasoning_placeholder.container():
-                            st.markdown("**Think summary**")
-                            st.markdown(reasoning)
-                    render_tools(tool_calls)
+                    # Use sync mode for non-MCP scenarios
+                    response = agent.step(user_input)
+                    logger.info("Agent response received, type: %s", type(response).__name__)
+
+                    if isinstance(response, StreamingChatAgentResponse):
+                        for partial in response:
+                            if partial.msg:
+                                content_delta = partial.msg.content
+                                if (
+                                    stream_mode is None
+                                    and assistant_text
+                                    and content_delta
+                                ):
+                                    stream_mode = (
+                                        "accumulated"
+                                        if content_delta.startswith(assistant_text)
+                                        else "delta"
+                                    )
+                                    logger.debug(
+                                        "Detected streaming mode for content: %s",
+                                        stream_mode,
+                                    )
+                                assistant_text = _merge_stream_text(
+                                    assistant_text, content_delta
+                                )
+                                content_placeholder.markdown(assistant_text)
+                                reasoning_delta = partial.msg.reasoning_content
+                                if reasoning_delta is not None:
+                                    if (
+                                        reasoning_stream_mode is None
+                                        and reasoning
+                                        and reasoning_delta
+                                    ):
+                                        reasoning_stream_mode = (
+                                            "accumulated"
+                                            if reasoning_delta.startswith(reasoning)
+                                            else "delta"
+                                        )
+                                        logger.debug(
+                                            "Detected streaming mode for reasoning: %s",
+                                            reasoning_stream_mode,
+                                        )
+                                    reasoning = _merge_stream_text(
+                                        reasoning, reasoning_delta
+                                    )
+                                    with reasoning_placeholder.container():
+                                        st.markdown("**Think summary**")
+                                        st.markdown(reasoning)
+                            for record in partial.info.get("tool_calls", []) or []:
+                                if hasattr(record, "as_dict"):
+                                    record_dict = record.as_dict()
+                                elif hasattr(record, "model_dump"):
+                                    record_dict = record.model_dump()
+                                else:
+                                    record_dict = record
+                                key = (
+                                    record_dict.get("tool_call_id")
+                                    or f"{record_dict.get('tool_name')}:{record_dict.get('args')}"
+                                )
+                                if key in seen_tool_calls:
+                                    continue
+                                seen_tool_calls.add(key)
+                                tool_calls.append(record_dict)
+                                render_tools(tool_calls)
+                    else:
+                        assistant_text = (
+                            response.msg.content
+                            if response.msg
+                            else "(no response)"
+                        )
+                        reasoning = (
+                            response.msg.reasoning_content
+                            if response.msg and response.msg.reasoning_content
+                            else ""
+                        )
+                        tool_calls = []
+                        for record in response.info.get("tool_calls", []) or []:
+                            if hasattr(record, "as_dict"):
+                                tool_calls.append(record.as_dict())
+                            elif hasattr(record, "model_dump"):
+                                tool_calls.append(record.model_dump())
+                            else:
+                                tool_calls.append(record)
+                        content_placeholder.markdown(assistant_text)
+                        if reasoning:
+                            with reasoning_placeholder.container():
+                                st.markdown("**Think summary**")
+                                st.markdown(reasoning)
+                        render_tools(tool_calls)
             except Exception as exc:
                 assistant_text = f"Error: {exc}"
                 reasoning = ""
@@ -263,6 +880,15 @@ def main() -> None:
                 "tool_calls": tool_calls,
             }
         )
+        history_path_value = st.session_state.get("history_path", "")
+        if history_path_value:
+            append_history_message(
+                Path(history_path_value),
+                "assistant",
+                assistant_text,
+                reasoning=reasoning,
+                tool_calls=tool_calls,
+            )
 
 
 if __name__ == "__main__":

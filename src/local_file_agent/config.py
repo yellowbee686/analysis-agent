@@ -22,11 +22,22 @@ class AppConfig:
     system_prompt: str | None = None
     max_tokens: int = 65535
     stream: bool = True
+    # Comma-separated list of model name patterns that should NOT use streaming
+    # e.g., "gemini,claude" will disable streaming for any model containing these strings
+    non_stream_patterns: str = ""
+    # MCP configuration
+    mcp_config_path: Path | None = None
+    mcp_enabled: bool = False
+    # MCP large response threshold (characters)
+    # When MCP tool response exceeds this, save to file and return metadata
+    mcp_content_threshold: int = 8000
 
 
 def load_config() -> AppConfig:
     data_dir = Path(os.environ.get("LOCAL_AGENT_DATA_DIR", "data"))
-    index_dir = Path(os.environ.get("LOCAL_AGENT_INDEX_DIR", ".context"))
+    index_dir = Path(
+        os.environ.get("LOCAL_AGENT_INDEX_DIR", "cache/indices")
+    )
     chunk_max_chars = int(
         os.environ.get("LOCAL_AGENT_CHUNK_MAX_CHARS", "1200")
     )
@@ -41,6 +52,22 @@ def load_config() -> AppConfig:
         "true",
         "yes",
     }
+    # Default: gemini models use non-streaming due to compatibility issues
+    non_stream_patterns = os.environ.get(
+        "LOCAL_AGENT_NON_STREAM_PATTERNS", "gemini"
+    )
+    # MCP configuration
+    mcp_config_path_str = os.environ.get("LOCAL_AGENT_MCP_CONFIG")
+    mcp_config_path = Path(mcp_config_path_str) if mcp_config_path_str else None
+    mcp_enabled = os.environ.get("LOCAL_AGENT_MCP_ENABLED", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    # MCP large response threshold (default 8000 characters)
+    mcp_content_threshold = int(
+        os.environ.get("LOCAL_AGENT_MCP_CONTENT_THRESHOLD", "8000")
+    )
     return AppConfig(
         data_dir=data_dir,
         index_dir=index_dir,
@@ -52,4 +79,8 @@ def load_config() -> AppConfig:
         system_prompt=system_prompt,
         max_tokens=max_tokens,
         stream=stream,
+        non_stream_patterns=non_stream_patterns,
+        mcp_config_path=mcp_config_path,
+        mcp_enabled=mcp_enabled,
+        mcp_content_threshold=mcp_content_threshold,
     )
