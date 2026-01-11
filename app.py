@@ -6,6 +6,7 @@ import os
 from dataclasses import replace
 from pathlib import Path
 import sys
+import time
 
 import streamlit as st
 
@@ -49,7 +50,7 @@ from camel.agents.chat_agent import (  # noqa: E402
 )
 from camel.messages import BaseMessage  # noqa: E402
 from local_file_agent.tools import LocalDocTools  # noqa: E402
-from local_file_agent.react_agent import build_react_agent, ReactCodeAgent  # noqa: E402
+from local_file_agent.code_agent.react_agent import build_react_agent, ReactCodeAgent  # noqa: E402
 from camel.types import ModelPlatformType, OpenAIBackendRole  # noqa: E402
 
 
@@ -714,16 +715,59 @@ def main() -> None:
                 if agent_type == "react":
                     # React Code Agent execution path
                     logger.info("Using React Code Agent execution path")
+                    
+                    # Containers for UI structure
+                    steps_container = st.container()
+                    current_step_placeholder = st.empty()
+                    final_response_placeholder = st.empty()
+                    
+                    current_think_content = ""
+                    step_count = 1
+                    last_update_time = 0
+                    update_interval = 0.2  # Update UI every 200ms to avoid scroll locking
+                    
                     for response in agent.stream_step(user_input):
-                        if response.content:
-                            assistant_text += response.content
-                            content_placeholder.markdown(assistant_text)
+                        # Handle Code Execution Result (End of a Step)
                         if response.reasoning:
-                            reasoning = response.reasoning
-                            with reasoning_placeholder.container():
-                                st.markdown("**Think summary**")
-                                st.markdown(reasoning[:500] + "..." if len(reasoning) > 500 else reasoning)
+                            # This response marks the completion of a "Think & Code" step
+                            # The 'content' in this response is the result summary, which we can ignore
+                            # in favor of our own formatting, or append. 
+                            # We'll use the accumulated think content + the raw result.
+                            
+                            with steps_container:
+                                step_title = f"Step {step_count}: Thought & Action"
+                                with st.expander(step_title, expanded=False):
+                                    st.markdown(current_think_content)
+                                    st.divider()
+                                    st.markdown("**Execution Result:**")
+                                    st.code(response.reasoning)
+                            
+                            # Reset for next step
+                            current_think_content = ""
+                            current_step_placeholder.empty()
+                            step_count += 1
+                            continue
+
+                        # Handle Content (Thinking/Coding or Final Answer)
+                        if response.content:
+                            current_think_content += response.content
+                            
+                            # Update the current view with throttling
+                            current_time = time.time()
+                            if current_time - last_update_time > update_interval:
+                                current_step_placeholder.markdown(current_think_content + "▌")  # Add cursor for liveness
+                                last_update_time = current_time
+
+                        # Handle Final Signal
                         if response.is_final:
+                            # If we are here, the remaining content is the Final Answer
+                            # Clear the "Thinking" placeholder
+                            current_step_placeholder.empty()
+                            # Render Final Answer
+                            if current_think_content:
+                                final_response_placeholder.markdown(current_think_content)
+                                # Also update assistant_text for history logging if needed
+                                assistant_text = current_think_content 
                             break
                 
                 # Check if MCP is enabled - if so, use async mode to avoid
@@ -733,8 +777,10 @@ def main() -> None:
                     logger.info("Using async mode for MCP tools compatibility")
                     
                     # Define callback for real-time UI updates
+                    last_update_time = 0
+                    update_interval = 0.2
                     def on_partial_update(partial):
-                        nonlocal assistant_text, reasoning, stream_mode, reasoning_stream_mode
+                        nonlocal assistant_text, reasoning, stream_mode, reasoning_stream_mode, last_update_time
                         
                         if partial.msg:
                             content_delta = partial.msg.content
@@ -755,7 +801,11 @@ def main() -> None:
                             assistant_text = _merge_stream_text(
                                 assistant_text, content_delta
                             )
-                            content_placeholder.markdown(assistant_text)
+                            # Throttle content updates
+                            current_time = time.time()
+                            if current_time - last_update_time > update_interval:
+                                content_placeholder.markdown(assistant_text + "▌")
+                                last_update_time = current_time
                             reasoning_delta = partial.msg.reasoning_content
                             if reasoning_delta is not None:
                                 if (
@@ -775,9 +825,11 @@ def main() -> None:
                                 reasoning = _merge_stream_text(
                                     reasoning, reasoning_delta
                                 )
-                                with reasoning_placeholder.container():
-                                    st.markdown("**Think summary**")
-                                    st.markdown(reasoning)
+                                # Throttle reasoning updates (using same timer)
+                                if current_time - last_update_time > update_interval:
+                                    with reasoning_placeholder.container():
+                                        st.markdown("**Think summary**")
+                                        st.markdown(reasoning)
                         
                         # Process tool calls in real-time
                         for record in partial.info.get("tool_calls", []) or []:
@@ -801,6 +853,12 @@ def main() -> None:
                     results = run_agent_step_async(
                         agent, user_input, on_partial=on_partial_update
                     )
+                    # Final update to ensure complete content is shown
+                    content_placeholder.markdown(assistant_text)
+                    if reasoning:
+                        with reasoning_placeholder.container():
+                            st.markdown("**Think summary**")
+                            st.markdown(reasoning)
                     logger.info("Async agent response received, %d results", len(results))
                 else:
                     # Use sync mode for non-MCP scenarios
@@ -808,6 +866,8 @@ def main() -> None:
                     logger.info("Agent response received, type: %s", type(response).__name__)
 
                     if isinstance(response, StreamingChatAgentResponse):
+                        last_update_time = 0
+                        update_interval = 0.2
                         for partial in response:
                             if partial.msg:
                                 content_delta = partial.msg.content
@@ -828,7 +888,11 @@ def main() -> None:
                                 assistant_text = _merge_stream_text(
                                     assistant_text, content_delta
                                 )
-                                content_placeholder.markdown(assistant_text)
+                                # Throttle content updates
+                                current_time = time.time()
+                                if current_time - last_update_time > update_interval:
+                                    content_placeholder.markdown(assistant_text + "▌")
+                                    last_update_time = current_time
                                 reasoning_delta = partial.msg.reasoning_content
                                 if reasoning_delta is not None:
                                     if (
@@ -848,9 +912,12 @@ def main() -> None:
                                     reasoning = _merge_stream_text(
                                         reasoning, reasoning_delta
                                     )
-                                    with reasoning_placeholder.container():
-                                        st.markdown("**Think summary**")
-                                        st.markdown(reasoning)
+                                    # Throttle reasoning updates
+                                    if current_time - last_update_time > update_interval:
+                                        with reasoning_placeholder.container():
+                                            st.markdown("**Think summary**")
+                                            st.markdown(reasoning)
+                            
                             for record in partial.info.get("tool_calls", []) or []:
                                 if hasattr(record, "as_dict"):
                                     record_dict = record.as_dict()
@@ -867,6 +934,13 @@ def main() -> None:
                                 seen_tool_calls.add(key)
                                 tool_calls.append(record_dict)
                                 render_tools(tool_calls)
+                        
+                        # Final update for sync loop
+                        content_placeholder.markdown(assistant_text)
+                        if reasoning:
+                            with reasoning_placeholder.container():
+                                st.markdown("**Think summary**")
+                                st.markdown(reasoning)
                     else:
                         assistant_text = (
                             response.msg.content
