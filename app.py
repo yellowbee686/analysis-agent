@@ -49,6 +49,7 @@ from camel.agents.chat_agent import (  # noqa: E402
 )
 from camel.messages import BaseMessage  # noqa: E402
 from local_file_agent.tools import LocalDocTools  # noqa: E402
+from local_file_agent.react_agent import build_react_agent, ReactCodeAgent  # noqa: E402
 from camel.types import ModelPlatformType, OpenAIBackendRole  # noqa: E402
 
 
@@ -456,7 +457,15 @@ def main() -> None:
             stream=bool(enable_stream),
         )
         tools = LocalDocTools(index)
-        st.session_state["agent"] = build_agent(tools, config)
+        # Build agent based on agent_type configuration
+        if config.agent_type == "react":
+            logger.info("Building React Code Agent")
+            st.session_state["agent"] = build_react_agent(index, config)
+            st.session_state["agent_type"] = "react"
+        else:
+            logger.info("Building Camel Agent")
+            st.session_state["agent"] = build_agent(tools, config)
+            st.session_state["agent_type"] = "camel"
         st.session_state["agent_data_dir"] = str(config.data_dir)
         st.session_state["agent_chunk_max"] = int(config.chunk_max_chars)
         st.session_state["agent_model_platform"] = selected_platform
@@ -699,11 +708,27 @@ def main() -> None:
                 stream_mode = None
                 reasoning_stream_mode = None
 
+                # Check agent type and use appropriate execution path
+                agent_type = st.session_state.get("agent_type", "camel")
+                
+                if agent_type == "react":
+                    # React Code Agent execution path
+                    logger.info("Using React Code Agent execution path")
+                    for response in agent.stream_step(user_input):
+                        if response.content:
+                            assistant_text += response.content
+                            content_placeholder.markdown(assistant_text)
+                        if response.reasoning:
+                            reasoning = response.reasoning
+                            with reasoning_placeholder.container():
+                                st.markdown("**Think summary**")
+                                st.markdown(reasoning[:500] + "..." if len(reasoning) > 500 else reasoning)
+                        if response.is_final:
+                            break
+                
                 # Check if MCP is enabled - if so, use async mode to avoid
                 # cross-event-loop issues with streamable-http transport
-                use_async_mode = is_mcp_connected()
-                
-                if use_async_mode:
+                elif is_mcp_connected():
                     # Use async mode for MCP tools compatibility
                     logger.info("Using async mode for MCP tools compatibility")
                     
