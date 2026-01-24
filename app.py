@@ -5,6 +5,7 @@ import logging
 import os
 from dataclasses import replace
 from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -102,6 +103,53 @@ def ensure_session_state() -> None:
         st.session_state["index_key"] = None
     if "mcp_connected" not in st.session_state:
         st.session_state["mcp_connected"] = False
+    if "data_dir_input" not in st.session_state:
+        st.session_state["data_dir_input"] = ""
+    if "data_dir_selected" not in st.session_state:
+        st.session_state["data_dir_selected"] = ""
+
+
+def _pick_directory() -> str | None:
+    if sys.platform == "darwin":
+        try:
+            script = (
+                'tell application "System Events" to '
+                'POSIX path of (choose folder with prompt '
+                '"Select folder to index")'
+            )
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "AppleScript folder picker failed: %s",
+                    result.stderr.strip(),
+                )
+                return None
+            selected = result.stdout.strip()
+            return selected or None
+        except Exception as exc:
+            logger.warning("AppleScript folder picker unavailable: %s", exc)
+            return None
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+        except Exception:
+            pass
+        selected = filedialog.askdirectory()
+        root.destroy()
+        return selected or None
+    except Exception as exc:
+        logger.warning("Directory picker unavailable: %s", exc)
+        return None
 
 
 def _sync_agent_history(agent, messages: list[dict]) -> None:
@@ -312,7 +360,35 @@ def main() -> None:
             st.session_state["messages"] = []
 
     st.sidebar.header("Index")
-    rebuild_index = st.sidebar.button("Rebuild index")
+    if not st.session_state["data_dir_selected"]:
+        st.session_state["data_dir_selected"] = str(config.data_dir)
+    if not st.session_state["data_dir_input"]:
+        st.session_state["data_dir_input"] = str(config.data_dir)
+    st.sidebar.text_input(
+        "Folder to index",
+        key="data_dir_input",
+        help="Select a local folder to index for search.",
+    )
+    choose_folder = st.sidebar.button("Choose folder", use_container_width=True)
+    if choose_folder:
+        picked = _pick_directory()
+        if picked:
+            st.session_state["data_dir_input"] = picked
+            st.session_state["data_dir_selected"] = picked
+            st.rerun()
+        else:
+            st.sidebar.warning(
+                "Folder picker unavailable or no folder selected."
+            )
+    input_path = Path(st.session_state["data_dir_input"]).expanduser()
+    if input_path.is_dir():
+        st.session_state["data_dir_selected"] = str(input_path)
+    else:
+        st.sidebar.error("Folder not found. Using last valid folder.")
+    selected_data_dir = Path(st.session_state["data_dir_selected"])
+    build_index_clicked = st.sidebar.button("Build index")
+    if selected_data_dir != config.data_dir:
+        config = replace(config, data_dir=selected_data_dir)
 
     st.sidebar.header("Model Settings")
     platform_values = [p.value for p in ModelPlatformType]
@@ -348,7 +424,7 @@ def main() -> None:
         index_dir=config.index_dir,
         chunk_max_chars=int(config.chunk_max_chars),
         snippet_chars=int(config.snippet_chars),
-        force_rebuild=rebuild_index,
+        force_rebuild=build_index_clicked,
     )
     stats = index.stats()
 
