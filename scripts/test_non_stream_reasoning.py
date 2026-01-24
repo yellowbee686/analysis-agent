@@ -2,19 +2,13 @@
 """Test non-streaming mode reasoning_content for DeepSeek V3.2.
 
 This script tests whether reasoning_content is correctly returned
-in non-streaming mode, both via raw OpenAI API and via CAMEL agent.
+in non-streaming mode via the raw OpenAI API.
 
 Usage:
-    # Test raw OpenAI API
     uv run python scripts/test_non_stream_reasoning.py
-
-    # Test with CAMEL agent
-    uv run python scripts/test_non_stream_reasoning.py --agent
 """
 from __future__ import annotations
 
-import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -129,119 +123,10 @@ def test_openai_non_stream() -> tuple[bool, str, str]:
         return False, "", str(e)
 
 
-def test_camel_agent_non_stream() -> tuple[bool, str, str]:
-    """Test non-streaming mode with CAMEL agent.
-    
-    Returns:
-        Tuple of (has_reasoning, reasoning_content, regular_content)
-    """
-    print("\n" + "=" * 60)
-    print("Testing: CAMEL Agent (non-streaming)")
-    print("=" * 60)
-    
-    # Set stream=false via environment
-    os.environ["LOCAL_AGENT_STREAM"] = "false"
-    os.environ["LOCAL_AGENT_MODEL_TYPE"] = MODEL_NAME
-    
-    from local_file_agent.config import load_config
-    from local_file_agent.agent import build_agent
-    from local_file_agent.indexer import LocalIndex
-    from local_file_agent.tools import LocalDocTools
-    
-    config = load_config()
-    print(f"Config stream: {config.stream}")
-    print(f"Config model_type: {config.model_type}")
-    
-    # Create minimal index and tools
-    data_dir = ROOT_DIR / "data"
-    if not data_dir.exists():
-        data_dir.mkdir(parents=True)
-    
-    index = LocalIndex(
-        data_dir,
-        chunk_max_chars=1200,
-        snippet_chars=400,
-        index_dir=ROOT_DIR / "cache" / "indices",
-    )
-    index.build(force_rebuild=False)
-    
-    tools = LocalDocTools(index)
-    agent = build_agent(tools, config)
-    
-    try:
-        print(f"\nSending prompt: {TEST_PROMPT}")
-        response = agent.step(TEST_PROMPT)
-        
-        # Get content
-        content = response.msg.content if response.msg else ""
-        
-        # Get reasoning_content
-        reasoning = ""
-        if response.msg and hasattr(response.msg, "reasoning_content"):
-            reasoning = response.msg.reasoning_content or ""
-        
-        print(f"\n--- Results ---")
-        print(f"Response type: {type(response).__name__}")
-        print(f"Has reasoning_content: {bool(reasoning)}")
-        print(f"Reasoning length: {len(reasoning)} chars")
-        print(f"Content length: {len(content)} chars")
-        
-        if reasoning:
-            print(f"\nReasoning (first 500 chars):")
-            print(reasoning[:500])
-            print("...")
-        
-        print(f"\nContent:")
-        print(content)
-        
-        # Debug: print message structure
-        print(f"\n--- Debug: Message attributes ---")
-        if response.msg:
-            for attr in dir(response.msg):
-                if not attr.startswith("_"):
-                    try:
-                        val = getattr(response.msg, attr)
-                        if not callable(val) and val:
-                            val_str = str(val)[:100]
-                            print(f"  {attr}: {val_str}")
-                    except Exception:
-                        pass
-        
-        return bool(reasoning), reasoning, content
-        
-    except Exception as e:
-        print(f"ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        return False, "", str(e)
-
-
 def main():
-    parser = argparse.ArgumentParser(
-        description="Test non-streaming reasoning_content"
-    )
-    parser.add_argument(
-        "--agent",
-        action="store_true",
-        help="Test with CAMEL agent (default: raw OpenAI API)",
-    )
-    parser.add_argument(
-        "--both",
-        action="store_true",
-        help="Test both raw API and CAMEL agent",
-    )
-    args = parser.parse_args()
-    
-    results = {}
-    
-    if args.both or not args.agent:
-        has_reasoning, reasoning, content = test_openai_non_stream()
-        results["Raw OpenAI API"] = has_reasoning
-    
-    if args.both or args.agent:
-        has_reasoning, reasoning, content = test_camel_agent_non_stream()
-        results["CAMEL Agent"] = has_reasoning
-    
+    has_reasoning, reasoning, content = test_openai_non_stream()
+    results = {"Raw OpenAI API": has_reasoning}
+
     # Summary
     print("\n" + "=" * 60)
     print("SUMMARY")

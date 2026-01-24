@@ -1,7 +1,7 @@
 """MCP (Model Context Protocol) toolkit management.
 
 This module provides utilities for connecting to MCP servers and
-retrieving tools for use with CAMEL agents.
+retrieving tools for use with agents.
 
 Key features:
 - MCP server connection management

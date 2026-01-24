@@ -31,8 +31,6 @@ class AppConfig:
     # MCP large response threshold (characters)
     # When MCP tool response exceeds this, save to file and return metadata
     mcp_content_threshold: int = 8000
-    # Agent type: "camel" (default) or "react"
-    agent_type: str = "camel"
 
 
 def load_config() -> AppConfig:
@@ -70,8 +68,6 @@ def load_config() -> AppConfig:
     mcp_content_threshold = int(
         os.environ.get("LOCAL_AGENT_MCP_CONTENT_THRESHOLD", "8000")
     )
-    # Agent type: "camel" (default) or "react"
-    agent_type = os.environ.get("LOCAL_AGENT_TYPE", "react")
     return AppConfig(
         data_dir=data_dir,
         index_dir=index_dir,
@@ -87,6 +83,4 @@ def load_config() -> AppConfig:
         mcp_config_path=mcp_config_path,
         mcp_enabled=mcp_enabled,
         mcp_content_threshold=mcp_content_threshold,
-        agent_type=agent_type,
     )
-

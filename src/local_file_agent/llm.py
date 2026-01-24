@@ -286,8 +286,8 @@ def get_model_params(model_name: str) -> dict:
 def get_context_window(model_name: str) -> int | None:
     """Get context window size for a model from config.
 
-    This value is used by camel's ChatAgent to determine when to auto-compress
-    memory. If not configured, camel will use the model's default token_limit.
+    This value can be used by agents to size their token limits. If not
+    configured, the model's default limit is used.
 
     Returns:
         Context window size in tokens, or None if not configured.

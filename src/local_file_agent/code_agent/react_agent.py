@@ -123,6 +123,31 @@ class ReactCodeAgent:
             mcp_toolkit=self._mcp_toolkit,
         )
         self.prompt_engine.loop_step = 0
+
+    def load_history(self, history: list[dict]) -> None:
+        """Load chat history into prompt messages."""
+        self.reset()
+        stats = self.index.stats()
+        init_msg = self.prompt_engine.make_init_message(
+            language="English",
+            file_count=stats.get("file_count", 0),
+            chunk_count=stats.get("chunk_count", 0),
+        )
+        self.messages.append(init_msg)
+        for message in history:
+            role = message.get("role")
+            if role not in {"user", "assistant"}:
+                continue
+            content = message.get("content", "")
+            if content is None:
+                continue
+            self.messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
+        self.prompt_engine.loop_step = 0
     
     def _call_llm(self, messages: list[dict]) -> str:
         """Call LLM and return response content.
