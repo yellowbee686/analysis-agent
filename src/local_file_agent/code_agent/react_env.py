@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +28,11 @@ if TYPE_CHECKING:
     from camel.toolkits.file_toolkit import FileToolkit
 
 logger = logging.getLogger(__name__)
+
+# Default timeout (seconds) for local retrieval to avoid blocking the agent loop
+DEFAULT_RETRIEVE_TIMEOUT_S = float(
+    os.environ.get("LOCAL_AGENT_RETRIEVE_TIMEOUT", "60")
+)
 
 
 class LocalEnv:
@@ -95,6 +102,7 @@ class LocalEnv:
         query: str,
         top_k: int = 5,
         min_score: int = 1,
+        timeout_s: float | None = None,
     ) -> dict[str, object]:
         """Retrieve relevant passages from local documents using BM25.
         
@@ -105,11 +113,58 @@ class LocalEnv:
             query: User question or keywords to search.
             top_k: Maximum number of results to return.
             min_score: Minimum match score to keep a result.
+            timeout_s: Max time in seconds to allow retrieval before
+                returning a timeout error. If None, uses env default.
             
         Returns:
             dict with query, matches, and total_chunks.
         """
-        return self._doc_tools.retrieve_local_docs(query, top_k, min_score)
+        timeout = DEFAULT_RETRIEVE_TIMEOUT_S if timeout_s is None else timeout_s
+        if timeout is not None and timeout <= 0:
+            timeout = None
+
+        if timeout is None:
+            return self._doc_tools.retrieve_local_docs(query, top_k, min_score)
+
+        result_holder: dict[str, object] = {}
+        error_holder: dict[str, Exception] = {}
+
+        def _run() -> None:
+            try:
+                result_holder["result"] = self._doc_tools.retrieve_local_docs(
+                    query, top_k, min_score
+                )
+            except Exception as exc:
+                error_holder["error"] = exc
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        thread.join(timeout)
+
+        if thread.is_alive():
+            logger.warning(
+                "retrieve_docs timed out after %.1fs for query=%s",
+                timeout,
+                query,
+            )
+            return {
+                "error": "retrieve_docs timed out",
+                "timed_out": True,
+                "timeout_s": timeout,
+                "query": query,
+                "top_k": top_k,
+                "min_score": min_score,
+            }
+
+        if "error" in error_holder:
+            return {
+                "error": str(error_holder["error"]),
+                "query": query,
+                "top_k": top_k,
+                "min_score": min_score,
+            }
+
+        return result_holder.get("result", {})
     
     def search_exact(
         self,
