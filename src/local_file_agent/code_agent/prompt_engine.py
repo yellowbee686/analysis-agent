@@ -76,9 +76,25 @@ def run_env(env: LocalEnv, query: str) -> tuple[str, str]:
 - `env.get_author_info(author_id)`: Get author information
 
 ### CBETA Buddhist Scripture Tools (requires MCP connection)
-- `env.search_cbeta(query, ...)`: Full-text search in Buddhist scriptures
-- `env.get_cbeta_work_info(work_id)`: Get scripture metadata
-- `env.get_cbeta_toc(work_id)`: Get table of contents
+
+**Search Tools:**
+- `env.cbeta_search(query, rows=20)`: Full-text search in Buddhist scriptures
+- `env.cbeta_search_all_in_one(query, around=10)`: Search with KWIC context
+- `env.cbeta_extended_search(query)`: Advanced AND/OR/NOT/NEAR search
+- `env.cbeta_search_title(query)`: Search scripture titles (經名)
+- `env.cbeta_kwic_search(work, juan, query)`: KWIC search in specific fascicle
+
+**Catalog/Metadata Tools:**
+- `env.cbeta_search_catalog(query)`: Search catalog by keyword or volume
+- `env.cbeta_search_by_translator(creator)`: Find works by translator (e.g., "玄奘")
+- `env.cbeta_search_by_dynasty(dynasty)`: Find works by dynasty (e.g., "唐")
+
+**Content Tools:**
+- `env.cbeta_get_work_info(work)`: Get scripture metadata (T0001 → 長阿含經)
+- `env.cbeta_get_toc(work)`: Get table of contents structure
+- `env.cbeta_get_juan_html(work, juan)`: Get HTML content of a fascicle
+- `env.cbeta_get_lines(linehead)`: Get specific lines by position
+- `env.cbeta_goto(linehead)`: Navigate to specific position
 
 ## Code Requirements
 
