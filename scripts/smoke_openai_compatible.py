@@ -12,7 +12,13 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from dotenv import load_dotenv
-from local_file_agent.llm import build_openai_clients, list_models, select_endpoint
+from local_file_agent.llm import (
+    build_openai_clients,
+    extract_response_text,
+    get_model_params,
+    list_models,
+    select_endpoint,
+)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -71,15 +77,26 @@ def main() -> None:
 
     client, _ = build_openai_clients(endpoint, use_azure=use_azure)
 
+    model_params = get_model_params(model_name)
+    if model_params:
+        logger.info("Using model params for '%s': %s", model_name, model_params)
+
     logger.info("Sending test request to model '%s'...", model_name)
     try:
         response = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=8,
+            **model_params,
         )
         logger.info("Response received successfully!")
-        print(f"Model response: {response.choices[0].message.content}")
+        text = extract_response_text(response)
+        print(f"Model response: {text}")
+        if not text:
+            logger.warning(
+                "Empty response text. The model may return reasoning_content or "
+                "multi-part content not captured by the standard field."
+            )
     except Exception as e:
         logger.error("Request failed: %s", e)
         raise

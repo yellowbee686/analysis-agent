@@ -16,7 +16,13 @@ from typing import Any, Generator
 
 from local_file_agent.config import AppConfig
 from local_file_agent.indexer import LocalIndex
-from local_file_agent.llm import build_openai_clients, get_model_params, select_endpoint
+from local_file_agent.llm import (
+    build_openai_clients,
+    extract_delta_text,
+    extract_response_text,
+    get_model_params,
+    select_endpoint,
+)
 from local_file_agent.code_agent.prompt_engine import PromptEngine, LOOP_UPPER_BOUND
 from local_file_agent.code_agent.react_env import LocalEnv
 
@@ -133,7 +139,7 @@ class ReactCodeAgent:
                 max_tokens=self.config.max_tokens,
                 **model_params,
             )
-            return response.choices[0].message.content or ""
+            return extract_response_text(response)
         except Exception as e:
             logger.error("LLM call failed: %s", e)
             raise
@@ -165,8 +171,11 @@ class ReactCodeAgent:
             )
             
             for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                if not chunk.choices:
+                    continue
+                text = extract_delta_text(chunk.choices[0].delta)
+                if text:
+                    yield text
                     
         except Exception as e:
             logger.error("LLM streaming call failed: %s", e)
