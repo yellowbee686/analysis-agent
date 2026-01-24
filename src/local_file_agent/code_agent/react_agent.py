@@ -89,6 +89,8 @@ class ReactCodeAgent:
         self.index = index
         self.config = config
         self.model_name = config.model_type or ""
+        self._working_directory = working_directory
+        self._mcp_toolkit = mcp_toolkit
         
         # Initialize environment with optional MCP toolkit
         self.env = LocalEnv(index, working_directory, mcp_toolkit=mcp_toolkit)
@@ -115,7 +117,11 @@ class ReactCodeAgent:
     def reset(self) -> None:
         """Reset agent state for new conversation."""
         self.messages = []
-        self.env = LocalEnv(self.index, None)
+        self.env = LocalEnv(
+            self.index,
+            self._working_directory,
+            mcp_toolkit=self._mcp_toolkit,
+        )
         self.prompt_engine.loop_step = 0
     
     def _call_llm(self, messages: list[dict]) -> str:

@@ -274,6 +274,11 @@ def is_mcp_connected() -> bool:
     return _mcp_toolkit is not None
 
 
+def get_mcp_toolkit() -> MCPToolkit | None:
+    """Return the connected MCP toolkit instance, if any."""
+    return _mcp_toolkit
+
+
 def get_session_storage_path() -> Path | None:
     """Get the storage path for the current session.
 

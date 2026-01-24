@@ -29,6 +29,7 @@ from local_file_agent.indexer import LocalIndex  # noqa: E402
 from local_file_agent.llm import list_models  # noqa: E402
 from local_file_agent.mcp import (  # noqa: E402
     connect_mcp,
+    get_mcp_toolkit,
     get_session_id,
     is_mcp_connected,
     set_content_threshold,
@@ -461,7 +462,12 @@ def main() -> None:
         # Build agent based on agent_type configuration
         if config.agent_type == "react":
             logger.info("Building React Code Agent")
-            st.session_state["agent"] = build_react_agent(index, config)
+            mcp_toolkit = get_mcp_toolkit() if is_mcp_connected() else None
+            st.session_state["agent"] = build_react_agent(
+                index,
+                config,
+                mcp_toolkit=mcp_toolkit,
+            )
             st.session_state["agent_type"] = "react"
         else:
             logger.info("Building Camel Agent")
