@@ -1,4 +1,6 @@
 #!/bin/bash
+set -e
+
 
 git pull
 git submodule sync --recursive
