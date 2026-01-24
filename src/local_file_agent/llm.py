@@ -286,10 +286,103 @@ def get_model_params(model_name: str) -> dict:
 def get_context_window(model_name: str) -> int | None:
     """Get context window size for a model from config.
 
-    This value is used by camel's ChatAgent to determine when to auto-compress
-    memory. If not configured, camel will use the model's default token_limit.
+    This value can be used by agents to size their token limits. If not
+    configured, the model's default limit is used.
 
     Returns:
         Context window size in tokens, or None if not configured.
     """
     return _get_model_config().get_context_window(model_name)
+
+
+def _normalize_message_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                if "text" in item:
+                    parts.append(str(item["text"]))
+                elif "content" in item:
+                    parts.append(str(item["content"]))
+                continue
+            parts.append(str(item))
+        return "".join(parts)
+    if isinstance(value, dict):
+        if "text" in value:
+            return str(value["text"])
+        if "content" in value:
+            return str(value["content"])
+    return ""
+
+
+def extract_message_text(message: object) -> str:
+    if message is None:
+        return ""
+    if isinstance(message, dict):
+        content = _normalize_message_text(message.get("content"))
+        if content:
+            return content
+        for key in ("reasoning_content", "reasoning"):
+            text = _normalize_message_text(message.get(key))
+            if text:
+                return text
+        return ""
+
+    content = _normalize_message_text(getattr(message, "content", None))
+    if content:
+        return content
+    for attr in ("reasoning_content", "reasoning"):
+        text = _normalize_message_text(getattr(message, attr, None))
+        if text:
+            return text
+    return ""
+
+
+def extract_delta_text(delta: object) -> str:
+    if delta is None:
+        return ""
+    if isinstance(delta, dict):
+        content = _normalize_message_text(delta.get("content"))
+        if content:
+            return content
+        for key in ("reasoning_content", "reasoning"):
+            text = _normalize_message_text(delta.get(key))
+            if text:
+                return text
+        return ""
+
+    content = _normalize_message_text(getattr(delta, "content", None))
+    if content:
+        return content
+    for attr in ("reasoning_content", "reasoning"):
+        text = _normalize_message_text(getattr(delta, attr, None))
+        if text:
+            return text
+    return ""
+
+
+def extract_response_text(response: object) -> str:
+    if response is None:
+        return ""
+    choices = getattr(response, "choices", None)
+    if choices:
+        message = getattr(choices[0], "message", None)
+        text = extract_message_text(message)
+        if text:
+            return text
+    try:
+        dumped = response.model_dump()
+    except Exception:
+        return ""
+    choices = dumped.get("choices") if isinstance(dumped, dict) else None
+    if not choices:
+        return ""
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    return extract_message_text(message)

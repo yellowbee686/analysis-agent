@@ -1,7 +1,7 @@
 """MCP (Model Context Protocol) toolkit management.
 
 This module provides utilities for connecting to MCP servers and
-retrieving tools for use with CAMEL agents.
+retrieving tools for use with agents.
 
 Key features:
 - MCP server connection management
@@ -179,9 +179,9 @@ async def connect_mcp(config_path: Path | str) -> MCPToolkit:
 
     logger.info("Connecting to MCP servers from config: %s", config_path)
     try:
-        # Use a 30s timeout for MCP tool execution
+        # Use a 60s timeout for MCP tool execution
         # The default 10s is too short for slow APIs like CBETA
-        _mcp_toolkit = MCPToolkit(config_path=str(config_path), timeout=30.0)
+        _mcp_toolkit = MCPToolkit(config_path=str(config_path), timeout=60.0)
         await _mcp_toolkit.connect()
         logger.info("MCP toolkit connected successfully")
         return _mcp_toolkit
@@ -272,6 +272,11 @@ def get_mcp_tools(wrap_for_large_response: bool = True) -> list[FunctionTool]:
 def is_mcp_connected() -> bool:
     """Check if MCP toolkit is connected."""
     return _mcp_toolkit is not None
+
+
+def get_mcp_toolkit() -> MCPToolkit | None:
+    """Return the connected MCP toolkit instance, if any."""
+    return _mcp_toolkit
 
 
 def get_session_storage_path() -> Path | None:
