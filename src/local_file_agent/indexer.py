@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -72,8 +76,12 @@ class LocalIndex:
         self._bm25_tokens: List[List[str]] = []
 
     def build(self, force_rebuild: bool = False) -> None:
+        cache_path = self._cache_path()
         if not force_rebuild and self._load_cache():
+            if cache_path:
+                logger.info("Using cached index: %s", cache_path)
             return
+        logger.info("Building index for %s", self.root_dir)
         self.files = find_markdown_files(self.root_dir)
         chunks: List[DocChunk] = []
         total_chars = 0
@@ -108,6 +116,11 @@ class LocalIndex:
         self.total_chars = total_chars
         self._build_bm25_index()
         self._save_cache()
+        logger.info(
+            "Index build complete: %d files, %d chunks",
+            len(self.files),
+            len(self.chunks),
+        )
 
     def _split_large_chunk(
         self, path: str, heading: str, text: str, start_line: int
@@ -429,5 +442,23 @@ class LocalIndex:
                 json.dumps(payload, ensure_ascii=True),
                 encoding="utf-8",
             )
-        except OSError:
+            logger.info("Saved index cache: %s", cache_path)
+            for path in cache_path.parent.glob("index_*.json"):
+                if path == cache_path:
+                    continue
+                try:
+                    path.unlink()
+                    logger.info("Removed old index cache: %s", path)
+                except OSError as exc:
+                    logger.warning(
+                        "Failed to remove old index cache %s: %s",
+                        path,
+                        exc,
+                    )
+        except OSError as exc:
+            logger.warning(
+                "Failed to write index cache %s: %s",
+                cache_path,
+                exc,
+            )
             return

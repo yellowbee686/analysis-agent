@@ -57,6 +57,12 @@ def build_index(
     snippet_chars: int,
     force_rebuild: bool,
 ) -> LocalIndex:
+    logger.info(
+        "Index request: data_dir=%s index_dir=%s force_rebuild=%s",
+        data_dir,
+        index_dir,
+        force_rebuild,
+    )
     index_key = (
         str(data_dir),
         str(index_dir),
