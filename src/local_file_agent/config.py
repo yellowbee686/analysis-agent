@@ -14,7 +14,8 @@ load_dotenv()
 class AppConfig:
     data_dir: Path
     index_dir: Path
-    chunk_max_chars: int = 1200
+    chunk_max_words: int = 400
+    chunk_overlap_words: int = 100
     snippet_chars: int = 400
     default_top_k: int = 5
     model_platform: str | None = None
@@ -38,8 +39,11 @@ def load_config() -> AppConfig:
     index_dir = Path(
         os.environ.get("LOCAL_AGENT_INDEX_DIR", "cache/indices")
     )
-    chunk_max_chars = int(
-        os.environ.get("LOCAL_AGENT_CHUNK_MAX_CHARS", "1200")
+    chunk_max_words = int(
+        os.environ.get("LOCAL_AGENT_CHUNK_MAX_WORDS", "400")
+    )
+    chunk_overlap_words = int(
+        os.environ.get("LOCAL_AGENT_CHUNK_OVERLAP_WORDS", "100")
     )
     snippet_chars = int(os.environ.get("LOCAL_AGENT_SNIPPET_CHARS", "400"))
     default_top_k = int(os.environ.get("LOCAL_AGENT_TOP_K", "5"))
@@ -71,7 +75,8 @@ def load_config() -> AppConfig:
     return AppConfig(
         data_dir=data_dir,
         index_dir=index_dir,
-        chunk_max_chars=chunk_max_chars,
+        chunk_max_words=chunk_max_words,
+        chunk_overlap_words=chunk_overlap_words,
         snippet_chars=snippet_chars,
         default_top_k=default_top_k,
         model_platform=model_platform,

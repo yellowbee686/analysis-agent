@@ -1,3 +1,19 @@
+# AGENTS.md
+
+## 0. Runtime Environment (Mandatory)
+
+- Always use the project virtual environment at `/Users/bytedance/code/analysis-agent/.venv`.
+- Never use system `python`, `pip`, or global site-packages for this project.
+- Recommended commands:
+
+```bash
+uv sync
+.venv/bin/python -m pytest
+.venv/bin/streamlit run app.py
+```
+
+---
+
 # 本地文件分析 Agent 开发文档（Living）
 
 > 目标：本地文件（以 Markdown 为主）可检索、可问答、可生成报表的智能 Agent；
@@ -54,7 +70,7 @@
 ```
 git submodule update --init --recursive
 uv sync
-uv run streamlit run app.py
+.venv/bin/streamlit run app.py
 ```
 
 ---
@@ -223,7 +239,8 @@ LOCAL_AGENT_MODEL_TYPE=deepseek-ai/deepseek-v3.2
 
 说明：
 - `LOCAL_AGENT_DATA_DIR` 指定文档目录（默认 `data`）。
-- `LOCAL_AGENT_CHUNK_MAX_CHARS` 指定分块上限（默认 `1200`）。
+- `LOCAL_AGENT_CHUNK_MAX_WORDS` 指定每个 chunk 的词窗口大小（默认 `400`）。
+- `LOCAL_AGENT_CHUNK_OVERLAP_WORDS` 指定相邻 chunk 的重叠词数（默认 `100`）。
 - `LOCAL_AGENT_INDEX_DIR` 指定索引缓存目录（默认 `cache/indices`）。
 - `LOCAL_AGENT_MODEL_CONFIG` 指定模型配置文件路径（默认使用 `models/model_config/base.yaml`，不存在则回退到 `base.yaml.example`）。
 - 未设置时回退到 CAMEL 默认值（由 `DEFAULT_MODEL_PLATFORM_TYPE` 与 `DEFAULT_MODEL_TYPE` 控制）。
@@ -315,7 +332,7 @@ LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json
 **使用流程**：
 1. 启动 MCP Server：`./scripts/start_mcp_server.sh --bg`
 2. 设置环境变量启用 MCP：`LOCAL_AGENT_MCP_ENABLED=true LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json`
-3. 启动 App：`uv run streamlit run app.py`
+3. 启动 App：`.venv/bin/streamlit run app.py`
 4. 在侧边栏查看 MCP 连接状态
 5. 向 Agent 询问佛典相关问题，如"搜索法华经相关的佛典"
 
@@ -371,15 +388,15 @@ LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json
 **测试脚本**：
 ```bash
 # 测试 GPT
-uv run python scripts/smoke_openai_compatible.py -v --model gpt-5.2-2025-12-11
+.venv/bin/python scripts/smoke_openai_compatible.py -v --model gpt-5.2-2025-12-11
 
 # 测试 Gemini
-uv run python scripts/smoke_openai_compatible.py -v --model gemini-3-pro-preview-new
+.venv/bin/python scripts/smoke_openai_compatible.py -v --model gemini-3-pro-preview-new
 ```
 
 **调试模式**：设置 `DEBUG=1` 启用详细日志：
 ```bash
-DEBUG=1 uv run streamlit run app.py
+DEBUG=1 .venv/bin/streamlit run app.py
 ```
 
 实测：部分网关会对 `gpt-i18n.byteintl.net` / `search-va.byteintl.net` 进行 301 跳转，导致 POST 变为 GET 引发 404。

@@ -30,7 +30,7 @@ code_agent/
 ├── react_agent.py      # Main agent loop implementation
 ├── react_env.py        # LocalEnv: execution environment with tools
 ├── prompt_engine.py    # System prompt construction
-└── DEV_DOC.md         # This documentation
+└── AGENTS.md          # This documentation
 ```
 
 ---
@@ -181,7 +181,7 @@ def run_env(env, query):
 1. Add tool in `mcp_servers/CbetaMCP/tools/cebta/<category>/`
 2. Add wrapper method in `LocalEnv` using `_run_mcp_tool()`
 3. Update prompt in `prompt_engine.py`
-4. Update this DEV_DOC.md
+4. Update this AGENTS.md
 
 ---
 

@@ -53,7 +53,8 @@ def build_index(
     *,
     data_dir: Path,
     index_dir: Path,
-    chunk_max_chars: int,
+    chunk_max_words: int,
+    chunk_overlap_words: int,
     snippet_chars: int,
     force_rebuild: bool,
 ) -> LocalIndex:
@@ -66,7 +67,8 @@ def build_index(
     index_key = (
         str(data_dir),
         str(index_dir),
-        chunk_max_chars,
+        chunk_max_words,
+        chunk_overlap_words,
         snippet_chars,
     )
     cached_index = st.session_state.get("index")
@@ -74,7 +76,8 @@ def build_index(
     if cached_index is None or cached_key != index_key or force_rebuild:
         index = LocalIndex(
             data_dir,
-            chunk_max_chars=chunk_max_chars,
+            chunk_max_words=chunk_max_words,
+            chunk_overlap_words=chunk_overlap_words,
             snippet_chars=snippet_chars,
             index_dir=index_dir,
         )
@@ -91,8 +94,10 @@ def ensure_session_state() -> None:
         st.session_state["agent"] = None
     if "agent_data_dir" not in st.session_state:
         st.session_state["agent_data_dir"] = ""
-    if "agent_chunk_max" not in st.session_state:
-        st.session_state["agent_chunk_max"] = 0
+    if "agent_chunk_max_words" not in st.session_state:
+        st.session_state["agent_chunk_max_words"] = 0
+    if "agent_chunk_overlap_words" not in st.session_state:
+        st.session_state["agent_chunk_overlap_words"] = 0
     if "agent_model_platform" not in st.session_state:
         st.session_state["agent_model_platform"] = ""
     if "agent_model_type" not in st.session_state:
@@ -216,7 +221,8 @@ def start_history_session(
     history_dir: Path,
     *,
     data_dir: str,
-    chunk_max_chars: int,
+    chunk_max_words: int,
+    chunk_overlap_words: int,
     model_platform: str,
     model_type: str,
     max_tokens: int,
@@ -225,7 +231,8 @@ def start_history_session(
     path = new_session_path(history_dir)
     meta = {
         "data_dir": data_dir,
-        "chunk_max_chars": chunk_max_chars,
+        "chunk_max_words": chunk_max_words,
+        "chunk_overlap_words": chunk_overlap_words,
         "model_platform": model_platform,
         "model_type": model_type,
         "max_tokens": max_tokens,
@@ -263,7 +270,8 @@ def _start_new_conversation(
     history_dir: Path,
     *,
     data_dir: str,
-    chunk_max_chars: int,
+    chunk_max_words: int,
+    chunk_overlap_words: int,
     model_platform: str,
     model_type: str,
     max_tokens: int,
@@ -276,7 +284,8 @@ def _start_new_conversation(
     history_path = start_history_session(
         history_dir,
         data_dir=data_dir,
-        chunk_max_chars=chunk_max_chars,
+        chunk_max_words=chunk_max_words,
+        chunk_overlap_words=chunk_overlap_words,
         model_platform=model_platform,
         model_type=model_type,
         max_tokens=max_tokens,
@@ -428,7 +437,8 @@ def main() -> None:
     index = build_index(
         data_dir=config.data_dir,
         index_dir=config.index_dir,
-        chunk_max_chars=int(config.chunk_max_chars),
+        chunk_max_words=int(config.chunk_max_words),
+        chunk_overlap_words=int(config.chunk_overlap_words),
         snippet_chars=int(config.snippet_chars),
         force_rebuild=build_index_clicked,
     )
@@ -438,7 +448,9 @@ def main() -> None:
     need_rebuild = (
         st.session_state["agent"] is None
         or st.session_state["agent_data_dir"] != str(config.data_dir)
-        or st.session_state["agent_chunk_max"] != int(config.chunk_max_chars)
+        or st.session_state["agent_chunk_max_words"] != int(config.chunk_max_words)
+        or st.session_state["agent_chunk_overlap_words"]
+        != int(config.chunk_overlap_words)
         or st.session_state["agent_model_platform"] != selected_platform
         or st.session_state["agent_model_type"] != model_type_value
         or st.session_state["agent_max_tokens"] != int(config.max_tokens)
@@ -449,7 +461,9 @@ def main() -> None:
     is_model_switch_only = (
         st.session_state["agent"] is not None
         and st.session_state["agent_data_dir"] == str(config.data_dir)
-        and st.session_state["agent_chunk_max"] == int(config.chunk_max_chars)
+        and st.session_state["agent_chunk_max_words"] == int(config.chunk_max_words)
+        and st.session_state["agent_chunk_overlap_words"]
+        == int(config.chunk_overlap_words)
         and (
             st.session_state["agent_model_platform"] != selected_platform
             or st.session_state["agent_model_type"] != model_type_value
@@ -471,7 +485,10 @@ def main() -> None:
             mcp_toolkit=mcp_toolkit,
         )
         st.session_state["agent_data_dir"] = str(config.data_dir)
-        st.session_state["agent_chunk_max"] = int(config.chunk_max_chars)
+        st.session_state["agent_chunk_max_words"] = int(config.chunk_max_words)
+        st.session_state["agent_chunk_overlap_words"] = int(
+            config.chunk_overlap_words
+        )
         st.session_state["agent_model_platform"] = selected_platform
         st.session_state["agent_model_type"] = model_type_value
         st.session_state["agent_max_tokens"] = int(config.max_tokens)
@@ -483,7 +500,8 @@ def main() -> None:
             history_path = start_history_session(
                 history_dir,
                 data_dir=str(config.data_dir),
-                chunk_max_chars=int(config.chunk_max_chars),
+                chunk_max_words=int(config.chunk_max_words),
+                chunk_overlap_words=int(config.chunk_overlap_words),
                 model_platform=selected_platform,
                 model_type=model_type_value,
                 max_tokens=int(config.max_tokens),
@@ -503,7 +521,8 @@ def main() -> None:
         _start_new_conversation(
             history_dir,
             data_dir=str(config.data_dir),
-            chunk_max_chars=int(config.chunk_max_chars),
+            chunk_max_words=int(config.chunk_max_words),
+            chunk_overlap_words=int(config.chunk_overlap_words),
             model_platform=selected_platform,
             model_type=model_type_value,
             max_tokens=int(config.max_tokens),
@@ -533,7 +552,8 @@ def main() -> None:
                     _start_new_conversation(
                         history_dir,
                         data_dir=str(config.data_dir),
-                        chunk_max_chars=int(config.chunk_max_chars),
+                        chunk_max_words=int(config.chunk_max_words),
+                        chunk_overlap_words=int(config.chunk_overlap_words),
                         model_platform=selected_platform,
                         model_type=model_type_value,
                         max_tokens=int(config.max_tokens),
@@ -557,7 +577,8 @@ def main() -> None:
             _start_new_conversation(
                 history_dir,
                 data_dir=str(config.data_dir),
-                chunk_max_chars=int(config.chunk_max_chars),
+                chunk_max_words=int(config.chunk_max_words),
+                chunk_overlap_words=int(config.chunk_overlap_words),
                 model_platform=selected_platform,
                 model_type=model_type_value,
                 max_tokens=int(config.max_tokens),
@@ -598,7 +619,8 @@ def main() -> None:
                     _start_new_conversation(
                         history_dir,
                         data_dir=str(config.data_dir),
-                        chunk_max_chars=int(config.chunk_max_chars),
+                        chunk_max_words=int(config.chunk_max_words),
+                        chunk_overlap_words=int(config.chunk_overlap_words),
                         model_platform=selected_platform,
                         model_type=model_type_value,
                         max_tokens=int(config.max_tokens),

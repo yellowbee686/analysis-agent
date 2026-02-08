@@ -418,7 +418,7 @@ class LocalDocTools:
         return {
             "query": query,
             "matches": matches,
-            "total_chunks": len(self.index.chunks),
+            "total_chunks": self.index.chunk_count,
         }
 
     def search_exact(
