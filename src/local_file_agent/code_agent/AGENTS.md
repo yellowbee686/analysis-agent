@@ -28,7 +28,8 @@ The Code Agent uses a React-style loop where an LLM generates Python code to int
 code_agent/
 ├── __init__.py         # Public exports
 ├── react_agent.py      # Main agent loop implementation
-├── react_env.py        # LocalEnv: execution environment with tools
+├── react_env.py        # LocalEnv interface shown to LLM (API + docstrings)
+├── env_tools.py        # Runtime implementations used by LocalEnv
 ├── prompt_engine.py    # System prompt construction
 └── AGENTS.md          # This documentation
 ```
@@ -39,7 +40,22 @@ code_agent/
 
 ### 2.1 `LocalEnv` (react_env.py)
 
-The execution environment that wraps all available tools. LLM-generated code calls methods on this object.
+The execution environment API exposed to LLM-generated code.
+
+`react_env.py` should stay interface-first:
+- concise signatures
+- accurate, minimal docstrings
+- one short usage example per method
+
+Runtime logic is implemented in `env_tools.py` and `local_file_agent/tools.py`.
+
+### 2.1.1 `env_tools.py`
+
+Implementation helpers used by `LocalEnv`:
+- `LocalDocSearchTools`: retrieval timeout control
+- `FilePatternSearchTools`: CAMEL `FileToolkit` wrapper
+- `SemanticScholarTools`: CAMEL `SemanticScholarToolkit` wrapper
+- `CbetaMcpTools`: CBETA MCP adapter via `MCPToolkit.call_tool_sync()`
 
 **Categories of tools:**
 
@@ -84,6 +100,9 @@ The agent integrates with CBETA (Chinese Buddhist Electronic Text Association) t
 | `cbeta_extended_search(query)` | AND/OR/NOT/NEAR operators | `query` with operator syntax |
 | `cbeta_search_title(query)` | Search scripture titles | `query` (min 3 chars) |
 | `cbeta_kwic_search(work, juan, query)` | KWIC in specific fascicle | `work`, `juan`, `query` |
+| `cbeta_search_sc(query)` | Simplified/Traditional auto-convert search | `query`, `rows` |
+| `cbeta_search_notes(query)` | Search notes/collations | `query`, `rows`, `facet` |
+| `cbeta_facet_query(query, facet_type)` | Facet aggregation by dimension | `query`, `facet_type` |
 
 #### Catalog/Metadata Tools (Finding Scriptures)
 
@@ -101,7 +120,7 @@ The agent integrates with CBETA (Chinese Buddhist Electronic Text Association) t
 | `cbeta_get_toc(work)` | Table of contents | `work` |
 | `cbeta_get_juan_html(work, juan)` | Fascicle HTML content | `work`, `juan` |
 | `cbeta_get_lines(linehead)` | Specific lines by position | `linehead`, `before/after` |
-| `cbeta_goto(linehead)` | Navigate to position | `linehead` or structured params |
+| `cbeta_goto(linehead)` | Navigate to position | `linehead` or `canon/work/vol/page/col/line` |
 
 ### 3.2 CBETA ID Formats
 
@@ -179,9 +198,10 @@ def run_env(env, query):
 ### 4.2 To CBETA (via MCP)
 
 1. Add tool in `mcp_servers/CbetaMCP/tools/cebta/<category>/`
-2. Add wrapper method in `LocalEnv` using `_run_mcp_tool()`
-3. Update prompt in `prompt_engine.py`
-4. Update this AGENTS.md
+2. Add wrapper method in `LocalEnv` and delegate implementation to `env_tools.py`
+3. Route calls through `CbetaMcpTools.run()` (`MCPToolkit.call_tool_sync()`)
+4. Update prompt in `prompt_engine.py`
+5. Update this AGENTS.md
 
 ---
 
@@ -227,5 +247,6 @@ Start MCP server: `./scripts/start_mcp_server.sh`
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2.0 | 2026-02-08 | Refactored LocalEnv into interface-only layer, moved runtime logic to `env_tools.py`, added CBETA `search_sc`/`search_notes`/`facet_query`, removed legacy aliases |
 | 1.1.0 | 2026-01-11 | Enhanced CBETA tools: added 12 new methods covering search, catalog, and content retrieval |
 | 1.0.0 | Initial | Basic LocalEnv with document retrieval and 3 CBETA tools |

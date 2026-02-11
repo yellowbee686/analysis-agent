@@ -94,7 +94,12 @@ def run_env(env: LocalEnv, query: str) -> tuple[str, str]:
 - `env.cbeta_get_toc(work)`: Get table of contents structure
 - `env.cbeta_get_juan_html(work, juan)`: Get HTML content of a fascicle
 - `env.cbeta_get_lines(linehead)`: Get specific lines by position
-- `env.cbeta_goto(linehead)`: Navigate to specific position
+- `env.cbeta_goto(linehead, canon, work, vol, page, col, line)`: Navigate to specific position
+
+**Enhanced CBETA Tools:**
+- `env.cbeta_search_sc(query, rows=10)`: Search with simplified/traditional auto-conversion
+- `env.cbeta_search_notes(query, rows=20)`: Search notes/annotations and collations
+- `env.cbeta_facet_query(query, facet_type="canon")`: Aggregate by canon/category/dynasty/creator/work
 
 ## Code Requirements
 

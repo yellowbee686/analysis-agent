@@ -176,7 +176,6 @@ uv sync
 app.py
 pyproject.toml
 src/local_file_agent/
-  agent.py            # Agent 构建，集成各种 toolkit
   config.py           # 配置管理
   history.py          # 对话历史管理
   indexer.py          # 本地文件索引
@@ -184,6 +183,11 @@ src/local_file_agent/
   mcp.py              # MCP toolkit 管理 + 大响应包装
   session_storage.py  # Session 文件存储（MCP 大响应）
   tools.py            # 本地文档工具
+  code_agent/
+    react_agent.py    # React code agent loop
+    react_env.py      # LocalEnv 接口层（注入 LLM context）
+    env_tools.py      # LocalEnv 运行时实现（MCP/Semantic/FileToolkit 适配）
+    prompt_engine.py  # Prompt 构造与 env API 注入
 cache/
   history/            # 对话历史存储目录
   indices/            # 索引缓存目录
