@@ -17,7 +17,7 @@ uv sync
 # 本地文件分析 Agent 开发文档（Living）
 
 > 目标：本地文件（以 Markdown 为主）可检索、可问答、可生成报表的智能 Agent；
-> 前端用 Streamlit，Agent 框架用 CAMEL。
+> 前端用 Streamlit，Agent 基于自研 ReactCodeAgent（CAMEL 作为工具库 submodule 引入）。
 
 ---
 
@@ -28,7 +28,7 @@ uv sync
 **目标**
 - 从本地目录读取/索引 Markdown 文件（当前样例位于 `data/`）。
 - 通过检索与工具调用回答用户问题、生成总结/报表。
-- 基于 CAMEL 构建可扩展的 Agent（含 ReAct/工具调用循环）。
+- 基于自研 ReactCodeAgent 构建可扩展的 Agent（LLM 生成代码 + LocalEnv 执行循环）。
 - 使用 Streamlit 提供可交互 UI（聊天 + 报表 + 索引状态）。
 
 **非目标（暂不做）**
@@ -45,11 +45,11 @@ uv sync
 
 ## 2. 技术选型与依据（初稿）
 
-### 2.1 CAMEL（Agent 框架）
-- CAMEL 是模块化的多智能体框架，提供 Agent、Society、Memory、RAG 等核心构建块。  
-  适合构建具备工具调用与检索能力的 Agent。
-- `RetrievalToolkit` 支持从本地向量存储检索，并接受本地文件路径、URL 或字符串内容作为 `contents`。  
-  适合作为“本地文件检索”的最小实现路径。
+### 2.1 CAMEL（Agent 框架 / 工具库）
+- CAMEL 作为 submodule 引入，主要使用其工具类（`FunctionTool`、`MCPToolkit`、`SemanticScholarToolkit`）。
+- 本项目 **未使用** CAMEL 内置的 `ChatAgent`、`RetrievalToolkit` 或向量检索模块。
+- Agent 核心是自研的 `ReactCodeAgent`（见 `code_agent/`），使用 LLM 生成 Python 代码 + `LocalEnv` 执行。
+- 检索使用自研的 `LocalIndex`（BM25 / Tantivy），而非 CAMEL Retriever。
 
 ### 2.2 Streamlit（前端）
 - 适合快速交互式原型与数据应用。
@@ -75,27 +75,36 @@ uv sync
 
 ---
 
-## 3. 系统架构（草图）
+## 3. 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                     Streamlit UI                    │
-│  - Chat (问答)   - 报表   - 索引管理/状态             │
+│                   Streamlit UI (app.py)              │
+│  Sidebar: Index / Model Settings / History           │
+│  Main:    Chat 问答 + Step 展开 + 最终回答            │
 └───────────────┬─────────────────────────────────────┘
                 │
                 v
 ┌─────────────────────────────────────────────────────┐
-│                    CAMEL Agent                      │
-│  ReAct Loop: Reason -> Tool -> Observe -> Answer     │
-│  - Tool: 本地文件检索                                │
-│  - Tool: 统计/报表生成                               │
+│              ReactCodeAgent (code_agent/)            │
+│  Loop: LLM 生成代码 -> LocalEnv 执行 -> 结果回传      │
+│  直到 LLM 直接回复（无代码）= 最终答案                 │
 └───────────────┬─────────────────────────────────────┘
                 │
                 v
 ┌─────────────────────────────────────────────────────┐
-│            Local File Ingestion & Index             │
-│  - 扫描目录  - 解析 MD  - 分块/元数据                │
-│  - 向量/关键词检索索引                               │
+│                   LocalEnv (react_env.py)            │
+│  - 本地文档: BM25/精确检索 (LocalIndex)               │
+│  - 文件操作: ChunkedFileTools                        │
+│  - 学术搜索: SemanticScholarToolkit                  │
+│  - 佛典搜索: CBETA MCP                              │
+└───────────────┬─────────────────────────────────────┘
+                │
+                v
+┌─────────────────────────────────────────────────────┐
+│            Local File Ingestion & Index              │
+│  - 扫描目录  - 解析 MD  - 按标题/词数分块             │
+│  - BM25 (rank_bm25) / Tantivy 关键词索引             │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -109,98 +118,133 @@ uv sync
 - 生成文档元数据：文件路径、标题、目录层级、更新时间等。
 
 ### 4.2 分块与索引
-- 分块策略（MVP）：按段落/标题分块；必要时限制 chunk 大小。
-- 索引策略：  
-  - **MVP**：使用 CAMEL `RetrievalToolkit` 直接检索本地路径；  
-  - **升级**：引入向量检索（CAMEL Retriever 模块支持向量检索/关键词检索）。
+- 分块策略：按 Markdown 标题（`#`/`##`/`###` 等）和词数上限分块。
+  - `chunk_max_words` 控制单个 chunk 的最大词数（默认 400）。
+  - `chunk_overlap_words` 控制相邻 chunk 的重叠词数（默认 100）。
+- 索引策略：自研 `LocalIndex`（`indexer.py`），支持两种后端：
+  - **BM25**（`rank_bm25`）：默认后端，纯 Python 实现。
+  - **Tantivy**（可选）：Rust 全文搜索引擎，速度更快。
+- 索引缓存到 `cache/indices/`，数据目录变更后需手动 Rebuild。
 
-### 4.3 Agent（ReAct + Tool）
-- Agent 负责解析用户问题，判断是否需要工具检索。
-- Tool 设计（初版）：
-  - `retrieve_local_docs(query, paths, top_k, threshold)`
-  - `summarize(texts, style)`
-  - `build_report(query, retrieval_context, template)`
-- CAMEL `BaseToolkit` + `FunctionTool` 方式注册工具，Agent 通过工具调用获取检索结果。
+### 4.3 Agent（ReactCodeAgent）
+- 使用自研 `ReactCodeAgent`（`code_agent/react_agent.py`），而非 CAMEL 内置 Agent。
+- 工作流程：LLM 生成 `run_env(env, query)` Python 代码 → 在 `LocalEnv` 中执行 → 结果回传 LLM → 循环直到 LLM 直接回答（无代码块）。
+- `LocalEnv`（`code_agent/react_env.py`）提供的工具分类：
 
-### 4.4 Streamlit UI（初版）
-页面建议拆分：
-- **主页**：聊天问答 + 检索结果引用
-- **索引管理**：目录选择、重新索引、索引状态
-- **报表**：模板选择、结果导出（md/pdf）
+| 类别 | 工具 | 说明 |
+|------|------|------|
+| 文档检索 | `retrieve_local_docs`, `search_exact`, `get_chunk_content`, `list_chunks_in_file` | BM25/精确搜索 |
+| 文件操作 | `read_file_chunk`, `search_in_file`, `get_file_info` | 大文件分块读取/搜索 |
+| 学术搜索 | `search_papers`, `get_paper_details`, `get_recommended_papers` | Semantic Scholar API |
+| 佛典搜索 | `cbeta_search`, `cbeta_get_work_info`, `cbeta_get_juan_html` 等 | CBETA MCP |
+| 语料统计 | `corpus_stats`, `list_docs` | 索引元数据 |
 
-多页面实现建议使用 `st.navigation` 或 `pages/` 目录；注意使用 Streamlit 内建导航以保留 `st.session_state`。
-
----
-
-## 5. 工具/接口设计（草案）
-
-### 5.1 本地检索工具
-输入：
-- query: string
-- contents: list[str]（本地文件路径）
-- top_k: int
-- similarity_threshold: float
-
-输出：
-- 聚合后的文本片段 + 元数据（来源文件、章节）
-
-### 5.2 报表生成工具
-输入：
-- query / topic
-- 检索上下文
-- 模板（如：摘要/综述/列表/表格）
-输出：
-- Markdown 报表
+### 4.4 Streamlit UI（当前实现）
+当前为**单页应用**（`app.py`），布局：
+- **Sidebar**：
+  - Index：目录选择（文本输入 + 系统文件夹选择器）、Build index 按钮
+  - Model Settings：模型下拉选择（从 `base.yaml` 读取）
+  - History：新建对话、历史列表（带删除按钮）
+  - MCP 状态显示
+  - 索引统计（文件数/chunk 数/字符数）
+- **Main**：
+  - 聊天界面：用户输入 + 助手回复
+  - Agent 步骤展开（Step N: Thought & Action + Execution Result）
+  - 最终回答渲染
 
 ---
 
-## 6. 里程碑（建议）
+## 5. 工具/接口设计（当前实现）
 
-1) **MVP 问答**
-- 单目录扫描、建立索引
-- CAMEL Agent + RetrievalToolkit + 基础 Streamlit 聊天
+### 5.1 本地检索工具（`LocalDocTools`）
+- `retrieve_local_docs(query, top_k=5, min_score=1)` → BM25 语义排序检索
+- `search_exact(pattern, max_results=20, case_sensitive=False)` → 精确子串匹配
+- `get_chunk_content(path, heading=None, start_line=None)` → 获取完整 chunk 内容
+- `list_chunks_in_file(path)` → 列出文件中所有 chunk
+- `corpus_stats()` → 索引统计
+- `list_docs(limit=20)` → 列出已索引文件
 
-2) **报表生成**
+### 5.2 文件操作工具（`ChunkedFileTools`）
+- `read_file_chunk(file_path, offset=0, length=8000)` → 按偏移量分块读取大文件
+- `search_in_file(file_path, pattern, context_chars=100, max_results=20)` → 文件内搜索
+- `get_file_info(file_path)` → 获取文件元数据
+
+### 5.3 报表生成（TODO）
+- 暂未实现模板化报表生成，当前由 LLM 在最终回答中直接生成 Markdown 格式输出。
+
+---
+
+## 6. 里程碑
+
+1) **MVP 问答** ✅ 已完成
+- 单目录扫描、BM25/Tantivy 索引
+- ReactCodeAgent + LocalEnv + Streamlit 聊天
+
+2) **外部工具集成** ✅ 已完成
+- CBETA 佛典搜索（MCP）
+- Semantic Scholar 学术搜索
+- 大文件分块读取/搜索
+
+3) **报表生成**（TODO）
 - 模板化输出（摘要/综述/结构化列表）
 - 导出为 `.md`
 
-3) **检索增强**
+4) **检索增强**（TODO）
 - 引入向量检索（可选：Qdrant 等）
 - chunk 优化与去重
 
 ---
 
-## 6.1 当前代码结构（MVP 脚手架）
+## 6.1 当前代码结构
 
 ```
-app.py
-pyproject.toml
+app.py                    # Streamlit 入口
+pyproject.toml            # 项目依赖（uv 管理）
+.env / .env.example       # 运行时环境变量
 src/local_file_agent/
-  config.py           # 配置管理
-  history.py          # 对话历史管理
-  indexer.py          # 本地文件索引
-  llm.py              # LLM 配置与端点管理
-  mcp.py              # MCP toolkit 管理 + 大响应包装
-  session_storage.py  # Session 文件存储（MCP 大响应）
-  tools.py            # 本地文档工具
+  __init__.py
+  config.py               # AppConfig 配置管理
+  history.py              # 对话历史管理（JSONL）
+  indexer.py              # LocalIndex: BM25/Tantivy 索引
+  llm.py                  # LLM 配置与端点管理（多 Key 随机采样）
+  mcp.py                  # MCP toolkit 管理 + 大响应包装
+  session_storage.py      # Session 文件存储（MCP 大响应）
+  tools.py                # LocalDocTools + ChunkedFileTools + 大小限制包装
   code_agent/
-    react_agent.py    # React code agent loop
-    react_env.py      # LocalEnv 接口层（注入 LLM context）
-    env_tools.py      # LocalEnv 运行时实现（MCP/Semantic/FileToolkit 适配）
-    prompt_engine.py  # Prompt 构造与 env API 注入
+    __init__.py           # Public exports
+    AGENTS.md             # Code Agent 开发文档
+    react_agent.py        # ReactCodeAgent: 主循环（LLM→代码→执行→回传）
+    react_env.py          # LocalEnv: LLM 代码执行环境接口层
+    env_tools.py          # LocalEnv 运行时实现（MCP/Semantic/FileToolkit 适配）
+    prompt_engine.py      # Prompt 构造与 env API 注入
 cache/
-  history/            # 对话历史存储目录
-  indices/            # 索引缓存目录
-  sessions/           # Session 文件存储目录
+  history/                # 对话历史存储（.jsonl）
+  indices/                # 索引缓存
+  sessions/               # Session 文件存储
     <session_id>/
-      mcp_responses/  # MCP 大响应文件
+      mcp_responses/      # MCP 大响应文件
 config/
-  mcp_config.json     # MCP 配置文件
+  mcp_config.json         # MCP 配置文件
+models/
+  model_config/
+    base.yaml             # 模型端点配置（私有，不入版本控制）
+    base.yaml.example     # 模型配置示例
 scripts/
-  start_mcp_server.sh # MCP server 启动脚本
-  stop_mcp_server.sh  # MCP server 停止脚本
+  install.sh / install.cmd          # 安装依赖（uv venv + sync）
+  pull.sh / pull.cmd                # Git pull + submodule update
+  start.sh / start.cmd              # 启动 MCP + Streamlit
+  start_mcp_server.sh               # MCP server 启动脚本
+  stop_mcp_server.sh                # MCP server 停止脚本
+  smoke_openai_compatible.py        # API 烟雾测试
+  test_non_stream_reasoning.py      # Non-stream reasoning 测试
+  test_nvidia_thinking.py           # NVIDIA thinking 参数测试
+tests/
+  test_code_agent_env_tools.py      # code_agent env_tools 测试
+  test_indexer_chunking.py          # 索引分块测试
+log/                      # 应用日志目录
 mcp_servers/
-  CbetaMCP/           # CBETA MCP server (git submodule)
+  CbetaMCP/               # CBETA MCP server (git submodule)
+camel/                    # CAMEL 框架 (git submodule)
 ```
 
 ### 6.2 对话历史管理
@@ -249,6 +293,8 @@ LOCAL_AGENT_MODEL_TYPE=deepseek-ai/deepseek-v3.2
 - `LOCAL_AGENT_MODEL_CONFIG` 指定模型配置文件路径（默认使用 `models/model_config/base.yaml`，不存在则回退到 `base.yaml.example`）。
 - 未设置时回退到 CAMEL 默认值（由 `DEFAULT_MODEL_PLATFORM_TYPE` 与 `DEFAULT_MODEL_TYPE` 控制）。
 - 可使用 `LOCAL_AGENT_SYSTEM_PROMPT` 覆盖系统提示词（可选）。
+- `LOCAL_AGENT_SNIPPET_CHARS` 指定搜索结果 snippet 长度（默认 `400`）。
+- `LOCAL_AGENT_TOP_K` 指定默认检索结果数（默认 `5`）。
 - `LOCAL_AGENT_MAX_TOKENS` 默认 65535，用于避免 CAMEL 关于 `max_tokens` 的警告。
 - `LOCAL_AGENT_STREAM` 控制流式输出（默认 true）。设为 `false` 可完全禁用流式输出。
   - 建议禁用场景：thinking model 的 reasoning 内容在 stream 模式下不显示、模型不支持 stream 模式下的 tool_call
@@ -263,10 +309,16 @@ LOCAL_AGENT_MODEL_TYPE=deepseek-ai/deepseek-v3.2
 建议将 API key 直接写入 `base.yaml`，配置文件本身保持私有。
 
 示例模型（base.yaml.example）：
-- `deepseek-ai/deepseek-v3.2`
-- `minimaxai/minimax-m2.1`
-- `z-ai/glm4.7`
-- `openai/gpt-oss-120b`
+- `deepseek-ai/deepseek-v3.2`（thinking via `chat_template_kwargs`）
+- `minimaxai/minimax-m2.1`（thinking via `<think>` tags）
+- `moonshotai/kimi-k2.5`（thinking via `chat_template_kwargs`）
+- `z-ai/glm5`（thinking via `chat_template_kwargs`）
+- `openai/gpt-oss-120b`（thinking via `reasoning_effort`）
+
+当前 `base.yaml` 还可包含 Azure 网关模型：
+- `gemini-3-flash-preview`
+- `gemini-3-pro-preview-new`
+- `gpt-5.2-2025-12-11`
 
 当前端点配置使用 `base_url` / `api_key` / `weight`，并可通过 `use_azure`
 指定客户端类型（AzureOpenAI / OpenAI）。
@@ -286,8 +338,9 @@ deepseek-ai/deepseek-v3.2:
 
 常见模型的 context window 大小：
 - DeepSeek-V3.2: 163,840 tokens
-- GPT-4o: 128,000 tokens
-- Claude 3.5 Sonnet: 200,000 tokens
+- Kimi K2.5: 256,000 tokens
+- GLM-5: 200,000 tokens
+- GPT-5.2: 128,000 tokens（估算）
 
 **禁用无效 Key**：将 `weight` 设为 `0` 可禁用该 endpoint。
 
@@ -325,8 +378,8 @@ LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json
 {
   "mcpServers": {
     "cbeta": {
-      "url": "http://localhost:8001/mcp/sse",
-      "transport": "sse",
+      "url": "http://localhost:8001/mcp/",
+      "type": "streamable_http",
       "description": "CBETA Buddhist Scripture Search MCP Server"
     }
   }
@@ -359,18 +412,7 @@ LOCAL_AGENT_MCP_CONFIG=config/mcp_config.json
   1. MCP 连接时保存事件循环到 `st.session_state["mcp_event_loop"]`
   2. 新增 `run_agent_step_async()` 函数使用保存的事件循环运行 `agent.astep()`
   3. 当 MCP 启用时，使用异步模式执行 agent step，确保所有 MCP 调用在同一事件循环中执行
-- **配置**：MCP 配置改为使用 `streamable_http` 类型（更高效）：
-  ```json
-  {
-    "mcpServers": {
-      "cbeta": {
-        "url": "http://localhost:8001/mcp/",
-        "type": "streamable_http",
-        "description": "CBETA Buddhist Scripture Search MCP Server"
-      }
-    }
-  }
-  ```
+- **配置**：MCP 配置改为使用 `streamable_http` 类型（更高效），见上方 MCP 配置文件。
 
 **MCP Optional 类型参数问题修复** (2026-01-10)：
 - **问题**：CAMEL 的 `MCPClient.generate_function_from_mcp_tool` 方法无法处理 JSON Schema 中类型为数组的参数（如 `["string", "null"]`）。当 MCP 工具使用 Optional 类型（如 `str | None`）时，fastmcp 会生成 `type: ["string", "null"]` 这样的 schema，导致 `type_map.get()` 调用报错 "unhashable type: 'list'"。
@@ -408,7 +450,7 @@ DEBUG=1 .venv/bin/streamlit run app.py
 
 ---
 
-## 8. MCP 大响应处理与 FileToolkit 集成
+## 8. MCP 大响应处理与 ChunkedFileTools 集成
 
 ### 8.1 设计背景
 
@@ -433,7 +475,7 @@ cache/sessions/<session_id>/mcp_responses/
 2. 检查响应大小是否超过阈值（默认 8000 字符）
 3. 如超过，保存到 session 对应的文件夹
 4. 返回元数据（文件路径、大小、预览等）
-5. LLM 使用 FileToolkit 的 `search_files` 或 `read_file` 来访问内容
+5. LLM 使用 ChunkedFileTools 的 `read_file_chunk` 或 `search_in_file` 来访问内容
 
 ### 8.3 配置
 
@@ -447,27 +489,29 @@ LOCAL_AGENT_MCP_CONTENT_THRESHOLD=8000
 
 - `session_storage.py`: Session 文件存储管理
 - `mcp.py`: MCP 工具包装器，拦截大响应
-- `agent.py`: 集成 FileToolkit 供 LLM 使用
+- `tools.py`: ChunkedFileTools + 大小限制包装
+- `code_agent/react_agent.py`: ReactCodeAgent 主循环
+- `code_agent/react_env.py`: LocalEnv（LLM 代码执行环境）
 
-### 8.5 FileToolkit 工具
+### 8.5 ChunkedFileTools（文件操作工具）
 
-Agent 现在包含以下文件操作工具：
+Agent 使用自研的 `ChunkedFileTools`（`tools.py`），替代 CAMEL 的 `FileToolkit`：
 
 | 工具 | 功能 |
 |------|------|
-| `write_to_file` | 写入文件（支持多种格式） |
-| `read_file` | 读取文件内容 |
-| `edit_file` | 编辑文件（替换内容） |
-| `search_files` | 在文件中搜索文本模式 |
+| `read_file_chunk(file_path, offset, length)` | 按偏移量分块读取大文件（默认每次 8000 字符） |
+| `search_in_file(file_path, pattern, context_chars, max_results)` | 文件内搜索（大小写不敏感） |
+| `get_file_info(file_path)` | 获取文件元数据（大小、行数） |
 
-**搜索示例**：
+此外，所有工具响应通过 `wrap_tool_with_size_limit()` 包装：超过阈值（默认 8000 字符）的响应
+会自动保存到 `cache/sessions/<session_id>/mcp_responses/`，返回元数据供 LLM 后续访问。
+
+**搜索示例**（LLM 在 `LocalEnv` 中调用）：
 ```python
-# LLM 可以调用 search_files 在保存的 MCP 响应中搜索
-search_files(
-    pattern="法鼓",
-    file_types=["json", "txt"],
-    path="/path/to/session/mcp_responses"
-)
+# 在大文件中搜索关键词
+result = env.search_in_file("/path/to/mcp_responses/cbeta_search.json", "法鼓")
+# 分块读取大文件
+chunk = env.read_file_chunk("/path/to/file.json", offset=0, length=5000)
 ```
 
 ### 8.6 SemanticScholarToolkit
@@ -492,7 +536,7 @@ Agent 集成了 Semantic Scholar 学术论文搜索工具：
 
 ---
 
-## 9. 参考资料（权威来源）
+## 10. 参考资料（权威来源）
 
 - CAMEL 文档主页：https://docs.camel-ai.org/
 - CAMEL RetrievalToolkit：https://docs.camel-ai.org/reference/camel.toolkits.retrieval_toolkit

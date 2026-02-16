@@ -36,10 +36,12 @@ models:
       temperature: 1.0
       top_p: 0.95
 
-  # GLM 4.7 (HF: zai-org/GLM-4.7)
-  # Ref: https://huggingface.co/zai-org/GLM-4.7
-  # Thinking: enabled by default
-  z-ai/glm4.7:
+  # Kimi K2.5 (HF: moonshotai/Kimi-K2.5)
+  # Ref: https://huggingface.co/moonshotai/Kimi-K2.5
+  # Context window: 256,000 tokens (multimodal agentic model, 1T MoE / 32B active)
+  # Thinking: enable via extra_body.chat_template_kwargs.thinking
+  moonshotai/kimi-k2.5:
+    context_window: 256000
     endpoints:
       - base_url: "https://integrate.api.nvidia.com/v1"
         api_key: "YOUR_NVIDIA_API_KEY"
@@ -48,6 +50,28 @@ models:
     params:
       temperature: 1.0
       top_p: 0.95
+      extra_body:
+        chat_template_kwargs:
+          thinking: true
+
+  # GLM-5 (HF: zai-org/GLM-5)
+  # Ref: https://huggingface.co/zai-org/GLM-5
+  # Context window: 200,000 tokens (744B MoE, 40B active)
+  # Thinking: enable via extra_body.chat_template_kwargs.enable_thinking
+  z-ai/glm5:
+    context_window: 200000
+    endpoints:
+      - base_url: "https://integrate.api.nvidia.com/v1"
+        api_key: "YOUR_NVIDIA_API_KEY"
+        weight: 1
+        use_azure: false
+    params:
+      temperature: 1.0
+      top_p: 0.95
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: true
+          clear_thinking: false
 
   # GPT-OSS 120B (HF: openai/gpt-oss-120b)
   # Ref: https://huggingface.co/openai/gpt-oss-120b
