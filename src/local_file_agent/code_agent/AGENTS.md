@@ -240,6 +240,10 @@ Start MCP server: `./scripts/start_mcp_server.sh`
 | CBETA search returns 0 results | Check query (use Traditional Chinese), try shorter terms |
 | Tool not found in env | Check method name matches MCP tool name exactly |
 | Code execution timeout | Simplify code, reduce iterations, add timeouts |
+| Model wraps code in tool_call tags | `extract_code_from_md` auto-unwraps `<\|...\|>` / `<xxx:tool_call>` wrappers |
+| Model outputs JSON `{"code":"..."}` | `extract_code_from_md` auto-extracts `code` field from JSON |
+| Model omits closing ``` in code block | `extract_code_from_md` falls back to unclosed-fence extraction |
+| Model uses `→` instead of `->` | Post-processing replaces Unicode arrows and smart quotes |
 
 ---
 
@@ -247,6 +251,7 @@ Start MCP server: `./scripts/start_mcp_server.sh`
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3.0 | 2026-02-16 | Robust `extract_code_from_md`: support tool-call wrappers (DeepSeek `<\|...\|>`, MiniMax `<xxx:tool_call>`), JSON `{"code":"..."}` payloads, unclosed markdown fences, Unicode arrow/quote post-processing |
 | 1.2.0 | 2026-02-08 | Refactored LocalEnv into interface-only layer, moved runtime logic to `env_tools.py`, added CBETA `search_sc`/`search_notes`/`facet_query`, removed legacy aliases |
 | 1.1.0 | 2026-01-11 | Enhanced CBETA tools: added 12 new methods covering search, catalog, and content retrieval |
 | 1.0.0 | Initial | Basic LocalEnv with document retrieval and 3 CBETA tools |
